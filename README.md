@@ -244,6 +244,6 @@ npm publish --access public
 
 ## License
 
-Apache-2.0. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).
 
 Built with love by [Arindam](https://github.com/Arindam200).

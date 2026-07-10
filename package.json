@@ -8,11 +8,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Arindam200/OKFgen.git"
+    "url": "git+https://github.com/Arindam200/okfgen.git"
   },
-  "homepage": "https://github.com/Arindam200/OKFgen#readme",
+  "homepage": "https://github.com/Arindam200/okfgen#readme",
   "bugs": {
-    "url": "https://github.com/Arindam200/OKFgen/issues"
+    "url": "https://github.com/Arindam200/okfgen/issues"
   },
   "type": "module",
   "bin": {
