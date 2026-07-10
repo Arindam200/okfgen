@@ -97,6 +97,27 @@ For Nebius, the interactive flow validates the API key by loading the current To
 
 ## Command Reference
 
+### Initialize a project
+
+Create a reusable project configuration:
+
+```bash
+okfgen init
+```
+
+This writes `okfgen.config.yml`. Generation automatically discovers that file in the current directory or a parent directory:
+
+```yaml
+provider: ollama
+model: qwen3:8b
+sources:
+  - ./docs
+output: ./okfgen-bundle
+log: true
+```
+
+Paths are resolved relative to the configuration file. Command flags override environment or saved settings, which override project configuration. Use `--config <file>` to select another file and `okfgen init --force` to replace an existing one.
+
 ### Generate a bundle
 
 ```bash
@@ -113,6 +134,7 @@ Options:
 - `-m, --model`: provider model ID
 - `--api-key`: one-off provider key
 - `-s, --source`: one or more files, directories, or HTTP(S) URLs
+- `--config`: explicit `okfgen.config.yml` path
 - `-o, --output`: output directory, default `./okfgen-bundle`
 - `--base-url`: override an OpenAI-compatible or Ollama endpoint
 - `--force`: allow writing into a non-empty directory that is not an existing OKF bundle
