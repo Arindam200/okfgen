@@ -166,6 +166,18 @@ okfgen validate ./payments-okfgen --json
 
 Validation checks frontmatter, required `type` fields, reserved files, index/log structure, and reports broken internal links as warnings.
 
+### Lint bundle quality
+
+Run editorial and graph-quality checks in addition to OKF conformance validation:
+
+```bash
+okfgen lint ./payments-okfgen
+okfgen lint ./payments-okfgen --strict
+okfgen lint ./payments-okfgen --json
+```
+
+Linting detects duplicate concept titles, orphan concepts, thin content, skipped heading levels, missing provenance, broken Markdown links, and broken heading anchors. Warnings are informational by default; `--strict` treats them as failures for CI.
+
 ### Explore a bundle
 
 ```bash

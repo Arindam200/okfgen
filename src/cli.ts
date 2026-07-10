@@ -17,6 +17,7 @@ import {
 } from "./config.js";
 import { friendlyError, registerDiagnosticSecret } from "./diagnostics.js";
 import { isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, startInteractiveShell } from "./interactive.js";
+import { lintBundle } from "./lint.js";
 import { fetchNebiusModels, formatModelLabel, providerNames, providers, resolveApiKey, type ProviderName } from "./providers.js";
 import { createProjectConfig, DEFAULT_PROJECT_CONFIG, loadProjectConfig } from "./project-config.js";
 import { validateBundle } from "./validate.js";
@@ -277,6 +278,27 @@ program
       const status = result.valid ? pc.green("valid") : pc.red("invalid");
       process.stdout.write(`${status}  ${result.filesChecked} Markdown files checked · ${result.issues.length} issue${result.issues.length === 1 ? "" : "s"}\n`);
       if (result.valid) process.stdout.write(`${pc.dim("Hint:")} Explore it with okfgen view ${directory}\n`);
+    }
+    if (!result.valid) process.exitCode = 1;
+  });
+
+program
+  .command("lint")
+  .description("Check an OKF bundle for structural and editorial quality issues")
+  .argument("[directory]", "bundle directory", ".")
+  .option("--json", "print machine-readable JSON")
+  .option("--strict", "treat warnings as failures")
+  .action(async (directory: string, flags: { json?: boolean; strict?: boolean }) => {
+    const result = await lintBundle(directory, { strict: flags.strict });
+    if (flags.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      for (const issue of result.issues) {
+        const label = issue.severity === "error" ? pc.red("error") : pc.yellow("warn ");
+        process.stdout.write(`${label}  ${pc.bold(issue.file)} [${issue.rule}]: ${issue.message}\n`);
+      }
+      const status = result.valid ? pc.green("clean") : pc.red("failed");
+      process.stdout.write(`${status}  ${result.filesChecked} Markdown files checked · ${result.issues.length} issue${result.issues.length === 1 ? "" : "s"}\n`);
     }
     if (!result.valid) process.exitCode = 1;
   });

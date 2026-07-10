@@ -1,4 +1,5 @@
 export { generateBundle } from "./generate.js";
+export { lintBundle } from "./lint.js";
 export { loadOkfgenEnv, resolveConfigValue, resolveProvider, saveOkfgenEnv } from "./config.js";
 export { createChatModel, fetchNebiusModels, formatModelLabel, providerNames, providers } from "./providers.js";
 export { createProjectConfig, findProjectConfig, loadProjectConfig, projectConfigSchema } from "./project-config.js";
@@ -7,6 +8,7 @@ export { bundlePlanSchema, conceptSchema } from "./schema.js";
 export { validateBundle } from "./validate.js";
 export { buildViewerData, startViewer } from "./viewer.js";
 export type { GenerateOptions, GenerateResult } from "./generate.js";
+export type { LintIssue, LintResult } from "./lint.js";
 export type { ConfigSource, ResolvedConfigValue } from "./config.js";
 export type { ModelOptions, ProviderName } from "./providers.js";
 export type { ProjectConfig } from "./project-config.js";

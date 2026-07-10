@@ -20,6 +20,13 @@ export async function validateBundle(directory: string): Promise<ValidationResul
   const files = await findMarkdownFiles(root);
   const fileSet = new Set(files.map((file) => toPosix(path.relative(root, file))));
   const issues: ValidationIssue[] = [];
+  const anchorsByFile = new Map<string, Set<string>>();
+
+  if (!fileSet.has("index.md")) issues.push({ severity: "error", file: "index.md", message: "Bundle root must contain index.md." });
+  for (const file of files) {
+    const relative = toPosix(path.relative(root, file));
+    anchorsByFile.set(relative, headingAnchors(await readFile(file, "utf8")));
+  }
 
   for (const file of files) {
     const relative = toPosix(path.relative(root, file));
@@ -28,7 +35,7 @@ export async function validateBundle(directory: string): Promise<ValidationResul
     if (name === "index.md") validateIndex(relative, content, issues);
     else if (name === "log.md") validateLog(relative, content, issues);
     else validateConcept(relative, content, issues);
-    validateLinks(relative, content, fileSet, issues);
+    validateLinks(relative, content, fileSet, anchorsByFile, issues);
   }
 
   return {
@@ -62,7 +69,9 @@ function validateIndex(file: string, content: string, issues: ValidationIssue[])
     try {
       const parsed = matter(content);
       body = parsed.content;
-      if (file === "index.md" && parsed.data.okf_version !== undefined && String(parsed.data.okf_version) !== "0.1") {
+      if (file === "index.md" && parsed.data.okf_version === undefined) {
+        issues.push({ severity: "error", file, message: "Bundle root index must declare okf_version." });
+      } else if (file === "index.md" && String(parsed.data.okf_version) !== "0.1") {
         issues.push({ severity: "warning", file, message: `Declared OKF version ${String(parsed.data.okf_version)} is not supported by this validator.` });
       }
     } catch (error) {
@@ -93,19 +102,43 @@ function validateLog(file: string, content: string, issues: ValidationIssue[]): 
   }
 }
 
-function validateLinks(file: string, content: string, files: Set<string>, issues: ValidationIssue[]): void {
+function validateLinks(file: string, content: string, files: Set<string>, anchorsByFile: Map<string, Set<string>>, issues: ValidationIssue[]): void {
   for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
     const rawTarget = match[1]?.trim();
-    if (!rawTarget || /^(?:[a-z][a-z\d+.-]*:|#)/i.test(rawTarget)) continue;
-    const cleanTarget = decodeURIComponent(rawTarget.split("#")[0] ?? "");
-    if (!cleanTarget || cleanTarget.endsWith("/")) continue;
-    const target = cleanTarget.startsWith("/")
+    if (!rawTarget || /^(?:[a-z][a-z\d+.-]*:)/i.test(rawTarget)) continue;
+    let decoded: string;
+    try { decoded = decodeURIComponent(rawTarget); } catch {
+      issues.push({ severity: "warning", file, message: `Link target is not valid URL encoding: ${rawTarget}` });
+      continue;
+    }
+    const [rawPath = "", fragment] = decoded.split("#", 2);
+    const cleanTarget = rawPath;
+    if (cleanTarget.endsWith("/")) continue;
+    const target = !cleanTarget ? file : cleanTarget.startsWith("/")
       ? path.posix.normalize(cleanTarget.slice(1))
       : path.posix.normalize(path.posix.join(path.posix.dirname(file), cleanTarget));
     if (target.endsWith(".md") && !files.has(target)) {
       issues.push({ severity: "warning", file, message: `Broken concept link: ${rawTarget}` });
+    } else if (fragment && target.endsWith(".md") && !anchorsByFile.get(target)?.has(slugify(fragment))) {
+      issues.push({ severity: "warning", file, message: `Broken heading anchor: ${rawTarget}` });
     }
   }
+}
+
+function headingAnchors(content: string): Set<string> {
+  const anchors = new Set<string>();
+  const counts = new Map<string, number>();
+  for (const match of content.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gm)) {
+    const base = slugify(match[1] ?? "");
+    const count = counts.get(base) ?? 0;
+    anchors.add(count === 0 ? base : `${base}-${count}`);
+    counts.set(base, count + 1);
+  }
+  return anchors;
+}
+
+function slugify(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/<[^>]+>/g, "").replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s+/g, "-");
 }
 
 async function findMarkdownFiles(directory: string): Promise<string[]> {
