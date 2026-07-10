@@ -40,7 +40,7 @@ export async function renderBundle(
   }
 
   if (options.includeLog !== false) {
-    const log = `# Directory Update Log\n\n## ${now.toISOString().slice(0, 10)}\n\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKF CLI.\n`;
+    const log = `# Directory Update Log\n\n## ${now.toISOString().slice(0, 10)}\n\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKFgen.\n`;
     await writeFile(path.join(root, "log.md"), log, "utf8");
     files.push("log.md");
   }

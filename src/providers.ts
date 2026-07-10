@@ -83,7 +83,7 @@ export function createChatModel(options: ModelOptions): BaseChatModel {
         model: options.model,
         apiKey: requireApiKey(options),
         temperature,
-        siteName: "OKF CLI",
+        siteName: "OKFgen",
       });
     case "ollama":
       return new ChatOllama({

@@ -50,7 +50,7 @@ export async function loadSources(inputs: string[], options: SourceOptions = {})
 
 async function fetchSource(url: string, fetchImpl: typeof fetch, remainingBytes: number): Promise<string> {
   const response = await fetchImpl(url, {
-    headers: { "user-agent": "okf-cli/0.1" },
+    headers: { "user-agent": "okfgen/0.1" },
     signal: AbortSignal.timeout(15_000),
     redirect: "follow",
   });

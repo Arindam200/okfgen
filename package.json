@@ -1,5 +1,5 @@
 {
-  "name": "okf-cli",
+  "name": "okfgen",
   "version": "0.0.1",
   "description": "Generate and validate Open Knowledge Format bundles with LangChain and your preferred model provider.",
   "author": {
@@ -8,15 +8,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Arindam200/okf-cli.git"
+    "url": "git+https://github.com/Arindam200/OKFgen.git"
   },
-  "homepage": "https://github.com/Arindam200/okf-cli#readme",
+  "homepage": "https://github.com/Arindam200/OKFgen#readme",
   "bugs": {
-    "url": "https://github.com/Arindam200/okf-cli/issues"
+    "url": "https://github.com/Arindam200/OKFgen/issues"
   },
   "type": "module",
   "bin": {
-    "okf": "dist/cli.js"
+    "okfgen": "dist/cli.js"
   },
   "files": [
     "dist",

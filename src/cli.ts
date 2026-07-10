@@ -22,7 +22,7 @@ interface GenerateFlags {
 }
 
 const program = new Command()
-  .name("okf")
+  .name("okfgen")
   .description("Generate and validate Open Knowledge Format bundles with your preferred LLM")
   .version("0.1.0")
   .showHelpAfterError()
@@ -35,7 +35,7 @@ program
   .addOption(new Option("-p, --provider <provider>", "LLM provider").choices([...providerNames]))
   .option("-m, --model <model>", "provider model ID")
   .option("--api-key <key>", "provider API key (prefer the provider environment variable in automation)")
-  .option("-o, --output <directory>", "bundle output directory", "./okf-bundle")
+  .option("-o, --output <directory>", "bundle output directory", "./okfgen-bundle")
   .option("-s, --source <source...>", "source files, directories, or URLs")
   .option("--base-url <url>", "override the provider base URL")
   .option("--force", "write into a non-empty output directory")
@@ -45,7 +45,7 @@ program
   .action(async (request: string | undefined, flags: GenerateFlags) => {
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     if (interactive) {
-      console.log(boxen(`${pc.bold(pc.cyan("OKF CLI"))}\n${pc.dim("Generate portable Open Knowledge Format bundles")}\n\n${pc.dim("Built with love by Arindam · github.com/Arindam200")}`, {
+      console.log(boxen(`${pc.bold(pc.cyan("OKFgen"))}\n${pc.dim("Generate portable Open Knowledge Format bundles")}\n\n${pc.dim("Built with love by Arindam · github.com/Arindam200")}`, {
         borderStyle: "round",
         borderColor: "cyan",
         padding: 1,
@@ -173,14 +173,14 @@ program
   .option("--no-open", "do not open the browser automatically")
   .action(async (directory: string, flags: { host: string; port: string; open: boolean }) => {
     const result = await validateBundle(directory);
-    if (!result.valid) throw new Error(`Cannot view an invalid OKF bundle. Run okf validate ${directory} for details.`);
+    if (!result.valid) throw new Error(`Cannot view an invalid OKF bundle. Run okfgen validate ${directory} for details.`);
     const viewer = await startViewer({
       directory,
       host: flags.host,
       port: parsePort(flags.port),
       openBrowser: flags.open,
     });
-    p.log.success(`OKF Explorer is running at ${viewer.url}`);
+    p.log.success(`OKFgen Explorer is running at ${viewer.url}`);
     p.log.info("Press Ctrl+C to stop the server");
   });
 

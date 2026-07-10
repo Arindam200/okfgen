@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildViewerData } from "./viewer.js";
 
-describe("OKF viewer", () => {
+describe("OKFgen viewer", () => {
   it("builds graph edges and sanitizes rendered documents", async () => {
     const root = await fixture();
     const data = await buildViewerData(root);
@@ -17,7 +17,7 @@ describe("OKF viewer", () => {
 });
 
 async function fixture(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "okf-viewer-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-viewer-"));
   await mkdir(path.join(root, "guides"), { recursive: true });
   await mkdir(path.join(root, "reference"), { recursive: true });
   await writeFile(path.join(root, "index.md"), "---\nokf_version: \"0.1\"\n---\n\n# Demo Bundle\n", "utf8");

@@ -5,12 +5,12 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Thanks for helping improve OKF CLI. Do not include API keys or private source content.
+      value: Thanks for helping improve OKFgen. Do not include API keys or private source content.
   - type: input
     id: version
     attributes:
-      label: OKF CLI version
-      placeholder: Run okf --version
+      label: OKFgen version
+      placeholder: Run okfgen --version
     validations:
       required: true
   - type: dropdown
