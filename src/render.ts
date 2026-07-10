@@ -1,6 +1,7 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rmdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify } from "yaml";
+import { inspectExistingBundle, type ExistingBundle } from "./existing-bundle.js";
 import type { BundlePlan, Concept } from "./schema.js";
 
 export interface RenderOptions {
@@ -10,6 +11,7 @@ export interface RenderOptions {
 }
 
 export interface RenderResult {
+  mode: "created" | "updated";
   files: string[];
 }
 
@@ -19,7 +21,8 @@ export async function renderBundle(
   options: RenderOptions = {},
 ): Promise<RenderResult> {
   const root = path.resolve(outputDirectory);
-  await assertWritableDestination(root, options.force ?? false);
+  const existingBundle = await inspectExistingBundle(root);
+  await assertWritableDestination(root, options.force ?? false, Boolean(existingBundle));
   await mkdir(root, { recursive: true });
 
   const now = options.now ?? new Date();
@@ -39,13 +42,17 @@ export async function renderBundle(
     files.push(relativePath);
   }
 
+  if (existingBundle) {
+    await removeStaleGeneratedFiles(root, existingBundle, new Set(files));
+  }
+
   if (options.includeLog !== false) {
-    const log = `# Directory Update Log\n\n## ${now.toISOString().slice(0, 10)}\n\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKFgen.\n`;
+    const log = renderLog(plan, now, existingBundle);
     await writeFile(path.join(root, "log.md"), log, "utf8");
     files.push("log.md");
   }
 
-  return { files: files.sort() };
+  return { mode: existingBundle ? "updated" : "created", files: files.sort() };
 }
 
 export function renderConcept(concept: Concept, now = new Date()): string {
@@ -126,14 +133,54 @@ function safeDestination(root: string, relativePath: string): string {
   return destination;
 }
 
-async function assertWritableDestination(root: string, force: boolean): Promise<void> {
+async function assertWritableDestination(root: string, force: boolean, updating: boolean): Promise<void> {
   try {
     const entries = await readdir(root);
-    if (entries.length > 0 && !force) {
-      throw new Error(`Output directory is not empty: ${root}. Use --force to add or replace generated files.`);
+    if (entries.length > 0 && !force && !updating) {
+      throw new Error(`Output directory is not empty and is not an OKF v0.1 bundle: ${root}. Use --force to add or replace generated files.`);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function renderLog(plan: BundlePlan, now: Date, existingBundle: ExistingBundle | undefined): string {
+  const date = now.toISOString().slice(0, 10);
+  if (!existingBundle) {
+    return `# Directory Update Log\n\n## ${date}\n\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKFgen.\n`;
+  }
+
+  const previousPaths = new Set(existingBundle.conceptPaths);
+  const nextPaths = new Set(plan.concepts.map((concept) => concept.path));
+  const improved = [...nextPaths].filter((conceptPath) => previousPaths.has(conceptPath)).length;
+  const added = [...nextPaths].filter((conceptPath) => !previousPaths.has(conceptPath)).length;
+  const removed = [...previousPaths].filter((conceptPath) => !nextPaths.has(conceptPath)).length;
+  const history = existingBundle.log?.trimEnd() || "# Directory Update Log";
+  return `${history}\n\n## ${date}\n\n* **Update**: Improved ${improved} existing concept${improved === 1 ? "" : "s"}, added ${added}, and removed ${removed} with OKFgen.\n`;
+}
+
+async function removeStaleGeneratedFiles(
+  root: string,
+  existingBundle: ExistingBundle,
+  nextGeneratedFiles: Set<string>,
+): Promise<void> {
+  const staleFiles = existingBundle.markdownFiles.filter((relativePath) => {
+    return path.posix.basename(relativePath) !== "log.md" && !nextGeneratedFiles.has(relativePath);
+  });
+
+  for (const relativePath of staleFiles) {
+    await unlink(safeDestination(root, relativePath));
+  }
+
+  const directories = [...new Set(staleFiles.map((relativePath) => path.posix.dirname(relativePath)))]
+    .filter((directory) => directory !== ".")
+    .sort((a, b) => b.split("/").length - a.split("/").length);
+  for (const directory of directories) {
+    try {
+      await rmdir(safeDestination(root, directory));
+    } catch (error) {
+      if (!(["ENOENT", "ENOTEMPTY"] as Array<string | undefined>).includes((error as NodeJS.ErrnoException).code)) throw error;
+    }
   }
 }
 
