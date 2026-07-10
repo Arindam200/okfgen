@@ -1,6 +1,6 @@
 {
   "name": "okfgen",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "Generate and validate Open Knowledge Format bundles with LangChain and your preferred model provider.",
   "author": {
     "name": "Arindam",

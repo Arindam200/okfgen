@@ -29,9 +29,11 @@ okfgen generate "Document the architecture, public interfaces, and operating pro
 
 Supported providers are `nebius`, `openrouter`, `ollama`, `openai`, and `anthropic`. Run `okfgen providers` to see credential environment variables. Prefer environment variables over `--api-key`; never print, commit, or copy API keys into generated knowledge.
 
+OKFgen reads exported provider credentials and `OKFGEN_PROVIDER`, `OKFGEN_MODEL`, `OKFGEN_BASE_URL`, and `OKFGEN_RETRY_ATTEMPTS`. Exported values override `~/.okfgen/.env`. Interactive users may opt in to saving a masked credential there; never save or modify credentials without that explicit confirmation.
+
 Interactive Nebius runs load the live model catalog after credential entry. In non-interactive or CI runs, always pass the exact Nebius model ID with `--model`; the CLI intentionally has no automatic Nebius model choice.
 
-Use `--base-url` only for an explicitly requested compatible endpoint. Use `--force` only after inspecting the non-empty output directory and confirming generated files may be replaced.
+Use `--base-url` only for an explicitly requested compatible endpoint. When the output directory is an existing OKF v0.1 bundle, generation automatically improves it, rebuilds its indexes, removes stale OKF documents, and appends to `log.md`. Do not add `--force` for that normal update path. Use `--force` only after inspecting a non-OKF non-empty output directory and confirming files may be replaced.
 
 ## Verify every bundle
 

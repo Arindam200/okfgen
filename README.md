@@ -7,12 +7,13 @@ The npm package and installed command are both **`okfgen`**.
 ## What It Does
 
 1. Collects source material from files, directories, or HTTP(S) URLs.
-2. Sends a structured generation prompt to the selected LangChain chat model.
-3. Parses the model response into a validated bundle plan.
-4. Renders Markdown concepts with YAML frontmatter deterministically.
-5. Creates progressive-disclosure `index.md` files and an optional `log.md`.
-6. Validates the finished bundle against the OKF v0.1 conformance rules.
-7. Optionally opens a searchable document explorer with an interactive relationship graph.
+2. Detects an existing OKF v0.1 bundle at the output path and includes it as update context.
+3. Sends a structured generation or improvement prompt to the selected LangChain chat model.
+4. Parses the model response into a validated bundle plan.
+5. Renders Markdown concepts with YAML frontmatter deterministically.
+6. Creates progressive-disclosure `index.md` files and maintains an optional `log.md` history.
+7. Validates the finished bundle against the OKF v0.1 conformance rules.
+8. Optionally opens a searchable document explorer with an interactive relationship graph.
 
 The model never writes files directly. This keeps frontmatter, paths, reserved filenames, and output boundaries under CLI control.
 
@@ -34,15 +35,45 @@ npm link
 
 ## Interactive Mode
 
-Run `okfgen` or `okfgen generate` with a terminal attached:
+Run `okfgen` with a terminal attached to open the interactive command center:
 
 ```bash
 okfgen
 ```
 
-The guided flow lets you select a provider, choose a model, paste a missing API key into a masked prompt, add sources, choose an output directory, and review a final configuration panel before generation.
+The large OKFgen wordmark is shown only on the first interactive run. After that, startup stays compact. Every action in the persistent shell uses a slash command:
 
-API keys are held in memory only and are never saved by OKFgen.
+- `/generate [request]` starts the guided generation flow
+- `/update [request]` refreshes the last generated bundle with its remembered sources
+- `/view [directory]` opens a bundle explorer
+- `/validate [directory]` validates a bundle
+- `/providers` lists model providers and credential variables
+- `/provider [name]` changes the provider for the current session
+- `/model [id]` changes the model for the current session
+- `/api-key` securely enters or replaces the current provider credential
+- `/status` shows effective configuration and where each value came from
+- `/config save` persists provider/model defaults; `/config reset` clears them
+- `/commands` (or `/help`) shows syntax, examples, and hints
+- `/exit` closes the shell
+
+Quoted arguments work as expected, for example `/generate "Document our payments API" --source ./docs`. You can still run `okfgen generate` directly for the original one-shot guided flow. It lets you select a provider, choose a model, paste a missing API key into a masked prompt, add sources, choose an output directory, and review a final configuration panel before generation. If the output directory already contains an OKF v0.1 bundle, the panel switches to update mode and reports how many existing concepts will be improved.
+
+API keys entered during a run stay in memory unless you explicitly choose to save them.
+
+### Configuration and credentials
+
+OKFgen resolves settings in this order: command flags, exported terminal environment, `~/.okfgen/.env`, then interactive prompts and provider defaults. If exactly one supported provider credential is exported, the interactive CLI selects that provider automatically. `/status` reports the effective provider, model, credential status, and source without displaying secrets.
+
+```bash
+export OPENROUTER_API_KEY="..."
+export OKFGEN_PROVIDER="openrouter"
+export OKFGEN_MODEL="openai/gpt-oss-120b"
+okfgen
+```
+
+When a key is entered through a masked prompt or `/api-key`, OKFgen asks whether to save it. Saving is opt-in. The `~/.okfgen` directory is protected with mode `0700` and its `.env` file with `0600` on supported platforms. Exported terminal variables always override saved values.
+
+Managed settings are `OKFGEN_PROVIDER`, `OKFGEN_MODEL`, `OKFGEN_BASE_URL`, and `OKFGEN_RETRY_ATTEMPTS`. Provider requests default to three retries; the retry setting accepts values from `0` through `10`.
 
 ## Providers
 
@@ -84,10 +115,25 @@ Options:
 - `-s, --source`: one or more files, directories, or HTTP(S) URLs
 - `-o, --output`: output directory, default `./okfgen-bundle`
 - `--base-url`: override an OpenAI-compatible or Ollama endpoint
-- `--force`: allow writing into a non-empty output directory
+- `--force`: allow writing into a non-empty directory that is not an existing OKF bundle
 - `--no-log`: skip `log.md`
 
 Without a TTY, `generate` prints a compact JSON summary, making it suitable for CI.
+Use `--print` to force this one-shot behavior even when a terminal is attached.
+
+A scheduled GitHub Actions template is available at [`examples/okfgen-update.yml`](./examples/okfgen-update.yml). Copy it into `.github/workflows/`, adjust the source and output paths, and add the selected provider credential as a repository secret.
+
+### Update an existing bundle
+
+Run the same generation command with an existing OKF v0.1 bundle as the output directory:
+
+```bash
+okfgen generate "Refresh this knowledge from the latest source material" \
+  --source ./docs \
+  --output ./payments-okfgen
+```
+
+OKFgen automatically supplies the current bundle to the model as context and asks for a complete improved plan. It updates retained concepts, adds new concepts, removes stale OKF Markdown files, rebuilds indexes, and appends a dated summary to the existing `log.md`. Unrelated non-Markdown files are left untouched. `--force` is not required for recognized OKF bundles.
 
 ### Validate a bundle
 
@@ -144,7 +190,7 @@ payments-okfgen/
     └── payments.md
 ```
 
-Every concept document contains OKF frontmatter with a non-empty `type`, followed by ordinary Markdown. The root index declares `okf_version: "0.1"`; nested indexes contain linked directory listings.
+Every concept document contains OKF frontmatter with a non-empty `type`, followed by ordinary Markdown. The root index declares `okf_version: "0.1"`; nested indexes contain linked directory listings. The log keeps the original creation entry and subsequent update entries with counts for improved, added, and removed concepts.
 
 ## TypeScript API
 
@@ -160,7 +206,7 @@ const result = await generateBundle({
   outputDirectory: "./catalog-okfgen",
 });
 
-console.log(result.validation.valid, result.files);
+console.log(result.mode, result.validation.valid, result.files);
 ```
 
 The exported API also includes `createChatModel`, `renderBundle`, `validateBundle`, provider metadata, and the Zod schemas.
@@ -175,7 +221,9 @@ The published package includes [SKILL.md](./SKILL.md), which gives Codex, Claude
 - Hidden directories, `.git`, dependencies, and build output are skipped during directory ingestion.
 - Remote sources use a 15-second timeout and are size-checked after download.
 - Concept paths are constrained to remain inside the output directory.
-- API keys are not persisted.
+- Automatic updates only activate when the destination root declares `okf_version: "0.1"`; other non-empty directories remain protected unless `--force` is explicit.
+- Update cleanup only removes stale OKF Markdown documents and indexes. Other files are preserved.
+- API keys are persisted only after explicit confirmation, in the private `~/.okfgen/.env` file; exported terminal values take precedence.
 - Model output is parsed and validated before any files are written.
 
 ## Development
