@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible problem with generation, validation, providers, or the visual explorer
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve OKF CLI. Do not include API keys or private source content.
+  - type: input
+    id: version
+    attributes:
+      label: OKF CLI version
+      placeholder: Run okf --version
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Interactive CLI
+        - Bundle generation
+        - Bundle validation
+        - Visual explorer
+        - Model provider
+        - TypeScript API
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Explain the behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Include the command and a minimal public bundle or source when possible. Remove all secrets.
+      placeholder: |
+        1. Run ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Node version, operating system, provider, and model ID
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste sanitized logs or validation output. Do not include API keys.
+      render: shell
