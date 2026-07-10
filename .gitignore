@@ -6,6 +6,8 @@ coverage/
 !.env.example
 *.tgz
 .gstack/
+.agents/
+okfgen/
 
 # Local tooling and operating system files
 .DS_Store
