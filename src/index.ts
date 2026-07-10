@@ -1,10 +1,12 @@
 export { generateBundle } from "./generate.js";
+export { loadOkfgenEnv, resolveConfigValue, resolveProvider, saveOkfgenEnv } from "./config.js";
 export { createChatModel, fetchNebiusModels, formatModelLabel, providerNames, providers } from "./providers.js";
 export { renderBundle } from "./render.js";
 export { bundlePlanSchema, conceptSchema } from "./schema.js";
 export { validateBundle } from "./validate.js";
 export { buildViewerData, startViewer } from "./viewer.js";
 export type { GenerateOptions, GenerateResult } from "./generate.js";
+export type { ConfigSource, ResolvedConfigValue } from "./config.js";
 export type { ModelOptions, ProviderName } from "./providers.js";
 export type { BundlePlan, Concept } from "./schema.js";
 export type { ValidationIssue, ValidationResult } from "./validate.js";

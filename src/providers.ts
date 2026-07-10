@@ -62,6 +62,7 @@ export interface ModelOptions {
   apiKey?: string;
   baseUrl?: string;
   temperature?: number;
+  maxRetries?: number;
 }
 
 export function createChatModel(options: ModelOptions): BaseChatModel {
@@ -73,6 +74,7 @@ export function createChatModel(options: ModelOptions): BaseChatModel {
         model: options.model,
         apiKey: requireApiKey(options),
         temperature,
+        maxRetries: options.maxRetries,
         streamUsage: false,
         configuration: {
           baseURL: options.baseUrl ?? "https://api.tokenfactory.nebius.com/v1/",
@@ -83,6 +85,7 @@ export function createChatModel(options: ModelOptions): BaseChatModel {
         model: options.model,
         apiKey: requireApiKey(options),
         temperature,
+        maxRetries: options.maxRetries,
         siteName: "OKFgen",
       });
     case "ollama":
@@ -90,25 +93,28 @@ export function createChatModel(options: ModelOptions): BaseChatModel {
         model: options.model,
         baseUrl: options.baseUrl ?? "http://127.0.0.1:11434",
         temperature,
+        maxRetries: options.maxRetries,
       });
     case "openai":
       return new ChatOpenAI({
         model: options.model,
         apiKey: requireApiKey(options),
         temperature,
+        maxRetries: options.maxRetries,
       });
     case "anthropic":
       return new ChatAnthropic({
         model: options.model,
         anthropicApiKey: requireApiKey(options),
         temperature,
+        maxRetries: options.maxRetries,
       });
   }
 }
 
 export function resolveApiKey(provider: ProviderName, explicit?: string): string | undefined {
   const envKey = providers[provider].envKey;
-  return explicit || (envKey ? process.env[envKey] : undefined);
+  return explicit?.trim() || (envKey ? process.env[envKey]?.trim() : undefined);
 }
 
 export async function fetchNebiusModels(

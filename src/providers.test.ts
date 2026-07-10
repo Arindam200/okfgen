@@ -1,7 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchNebiusModels, formatModelLabel } from "./providers.js";
+import { fetchNebiusModels, formatModelLabel, resolveApiKey } from "./providers.js";
 
 describe("Nebius model discovery", () => {
+  it("prefers an explicit key and trims terminal credentials", () => {
+    const original = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "  terminal  ";
+    try {
+      expect(resolveApiKey("openai")).toBe("terminal");
+      expect(resolveApiKey("openai", " explicit ")).toBe("explicit");
+    } finally {
+      if (original === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = original;
+    }
+  });
   it("formats model IDs for people without changing the underlying ID", () => {
     expect(formatModelLabel("openai/gpt-oss-120b")).toBe("GPT OSS 120B (OpenAI)");
     expect(formatModelLabel("meta-llama/Meta-Llama-3.3-70B-Instruct")).toBe("Llama 3.3 70B Instruct (Meta)");
