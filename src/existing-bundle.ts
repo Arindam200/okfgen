@@ -24,7 +24,7 @@ export async function inspectExistingBundle(directory: string): Promise<Existing
     return { root, markdownFiles: relativeFiles, conceptPaths, ...(log === undefined ? {} : { log }) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    return undefined;
+    throw error;
   }
 }
 

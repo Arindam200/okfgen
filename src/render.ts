@@ -134,13 +134,15 @@ function safeDestination(root: string, relativePath: string): string {
 }
 
 async function assertWritableDestination(root: string, force: boolean, updating: boolean): Promise<void> {
+  let entries: string[];
   try {
-    const entries = await readdir(root);
-    if (entries.length > 0 && !force && !updating) {
-      throw new Error(`Output directory is not empty and is not an OKF v0.1 bundle: ${root}. Use --force to add or replace generated files.`);
-    }
+    entries = await readdir(root);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (entries.length > 0 && !force && !updating) {
+    throw new Error(`Output directory is not empty and is not an OKF v0.1 bundle: ${root}. Use --force to add or replace generated files.`);
   }
 }
 

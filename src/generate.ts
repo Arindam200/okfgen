@@ -1,5 +1,6 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { BaseMessageLike } from "@langchain/core/messages";
+import path from "node:path";
 import { createChatModel, type ModelOptions } from "./providers.js";
 import { inspectExistingBundle } from "./existing-bundle.js";
 import { buildGenerationMessages } from "./prompt.js";
@@ -36,7 +37,10 @@ export async function generateBundle(options: GenerateOptions): Promise<Generate
   const existingBundle = await inspectExistingBundle(options.outputDirectory);
   options.onProgress?.({ stage: "sources", message: options.sources?.length ? `Reading ${options.sources.length} source${options.sources.length === 1 ? "" : "s"}` : "Preparing generation context" });
   const context = await loadSources(options.sources ?? []);
-  const existingBundleContext = existingBundle ? await loadSources([existingBundle.root]) : "";
+  const existingLogPath = existingBundle ? path.join(existingBundle.root, "log.md") : undefined;
+  const existingBundleContext = existingBundle ? await loadSources([existingBundle.root], {
+    filter: (file) => file !== existingLogPath,
+  }) : "";
   const messages = buildGenerationMessages(options.request, context, existingBundleContext);
   const model = options.modelInstance ?? createChatModel(options);
   options.onProgress?.({ stage: "model", message: existingBundle ? "Asking the model to improve the bundle" : "Asking the model to design the bundle" });
