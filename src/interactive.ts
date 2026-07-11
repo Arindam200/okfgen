@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { Command } from "commander";
+import { CommanderError, type Command } from "commander";
 import * as p from "@clack/prompts";
 import {
   getCredentialStatus,
@@ -15,7 +15,7 @@ import {
   saveOkfgenEnv,
   setSessionConfig,
 } from "./config.js";
-import { friendlyError, registerDiagnosticSecret } from "./diagnostics.js";
+import { friendlyError, PromptCancelledError, registerDiagnosticSecret } from "./diagnostics.js";
 import { providerNames, providers, type ProviderName } from "./providers.js";
 
 let shellActive = false;
@@ -145,7 +145,9 @@ export async function startInteractiveShell(program: Command, version: string): 
           continue;
         }
       } catch (error) {
-        console.log(`${pc.red("Could not update configuration:")} ${friendlyError(error)}`);
+        if (!(error instanceof PromptCancelledError)) {
+          console.log(`${pc.red("Could not update configuration:")} ${friendlyError(error)}`);
+        }
         continue;
       }
       if (!["generate", "update", "view", "validate", "providers"].includes(command)) {
@@ -160,6 +162,11 @@ export async function startInteractiveShell(program: Command, version: string): 
         const hint = commandHint(invocation[0] ?? command);
         if (hint) console.log(`\n${pc.dim("Next:")} ${hint}`);
       } catch (error) {
+        if (error instanceof PromptCancelledError) continue;
+        if (error instanceof CommanderError) {
+          if (error.exitCode !== 0) console.log(`${pc.dim("Hint:")} Run ${pc.cyan("/commands")} for syntax and examples.`);
+          continue;
+        }
         console.log(`${pc.red("Could not run command:")} ${friendlyError(error)}`);
         console.log(`${pc.dim("Hint:")} Run ${pc.cyan(`/commands`)} for syntax and examples.`);
       }
@@ -291,7 +298,10 @@ function sourceLabel(source: string, envKey?: string): string {
 }
 
 function unwrapPrompt<T>(value: T | symbol): T {
-  if (p.isCancel(value)) throw new Error("Operation cancelled");
+  if (p.isCancel(value)) {
+    p.cancel("Operation cancelled");
+    throw new PromptCancelledError();
+  }
   return value as T;
 }
 

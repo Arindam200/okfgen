@@ -1,5 +1,12 @@
 import { providerNames, providers } from "./providers.js";
 
+export class PromptCancelledError extends Error {
+  constructor() {
+    super("Operation cancelled");
+    this.name = "PromptCancelledError";
+  }
+}
+
 const runtimeSecrets = new Map<string, string>();
 
 export function registerDiagnosticSecret(key: string, value: string): void {
