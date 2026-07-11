@@ -9,9 +9,17 @@ describe("project configuration", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-project-"));
     const file = path.join(root, "okfgen.config.yml");
     await createProjectConfig(file);
-    expect(await readFile(file, "utf8")).toContain("provider: ollama");
+    const content = await readFile(file, "utf8");
+    expect(content).toContain("provider: nebius");
+    expect(content).toContain("Set NEBIUS_API_KEY");
+    expect(content).toContain("# provider: ollama");
     const loaded = await loadProjectConfig(file);
-    expect(loaded.config).toMatchObject({ model: "qwen3:8b", sources: ["./docs"], log: true });
+    expect(loaded.config).toMatchObject({
+      provider: "nebius",
+      model: "zai-org/GLM-5.2",
+      sources: ["./docs"],
+      log: true,
+    });
   });
 
   it("discovers configuration in a parent directory", async () => {

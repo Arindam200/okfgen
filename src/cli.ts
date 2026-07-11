@@ -9,6 +9,7 @@ import {
   loadOkfgenEnv,
   OKFGEN_BASE_URL_ENV_KEY,
   OKFGEN_MODEL_ENV_KEY,
+  OKFGEN_PROVIDER_ENV_KEY,
   OKFGEN_RETRY_ATTEMPTS_ENV_KEY,
   resolveConfigValue,
   resolveProvider,
@@ -16,7 +17,7 @@ import {
   saveOkfgenEnv,
 } from "./config.js";
 import { friendlyError, PromptCancelledError, registerDiagnosticSecret, unwrapPrompt as unwrap } from "./diagnostics.js";
-import { isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, startInteractiveShell } from "./interactive.js";
+import { formatHomePath, isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, showWordmark, startInteractiveShell } from "./interactive.js";
 import { lintBundle } from "./lint.js";
 import { fetchNebiusModels, formatModelLabel, providerNames, providers, resolveApiKey, type ProviderName } from "./providers.js";
 import { createProjectConfig, DEFAULT_PROJECT_CONFIG, loadProjectConfig } from "./project-config.js";
@@ -47,6 +48,60 @@ const program = new Command()
   .showHelpAfterError()
   .configureHelp({ sortOptions: true, sortSubcommands: true });
 
+program.hook("preAction", async () => {
+  const machineReadable = cliArguments.includes("--json") || cliArguments.includes("--print");
+  if (process.stdin.isTTY && process.stdout.isTTY && !machineReadable && !isInteractiveShellActive()) {
+    await showInteractiveBranding(true);
+  }
+});
+
+program
+  .command("provider")
+  .description("Configure the default LLM provider and model")
+  .argument("[provider]", "LLM provider")
+  .addOption(new Option("-m, --model <model>", "provider model ID"))
+  .option("--api-key <key>", "provider API key (prefer a masked prompt)")
+  .option("--base-url <url>", "override the provider base URL")
+  .action(async (providerArgument: string | undefined, flags: Pick<GenerateFlags, "model" | "apiKey" | "baseUrl">) => {
+    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    const provider = providerArgument ? parseProvider(providerArgument) : await promptProvider(interactive);
+    let apiKey = resolveApiKey(provider, flags.apiKey);
+
+    if (providers[provider].requiresKey && !apiKey) {
+      if (!interactive) throw new Error(`Set ${providers[provider].envKey} or use --api-key.`);
+      apiKey = unwrap(await p.password({
+        message: `Paste your ${providers[provider].label} API key`,
+        mask: "*",
+        validate: (value) => String(value ?? "").trim() ? undefined : "An API key is required",
+      }));
+      registerDiagnosticSecret(providers[provider].envKey ?? "API_KEY", apiKey);
+    }
+
+    const baseUrl = resolveConfigValue(OKFGEN_BASE_URL_ENV_KEY, flags.baseUrl).value;
+    let model = flags.model?.trim();
+    if (!model) {
+      if (interactive) model = await promptModel(provider, apiKey, baseUrl);
+      else if (provider === "nebius") throw new Error("Choose a Nebius model with --model when running non-interactively.");
+      else model = requireDefaultModel(provider);
+    }
+
+    const updates: Record<string, string> = {
+      [OKFGEN_PROVIDER_ENV_KEY]: provider,
+      [OKFGEN_MODEL_ENV_KEY]: model,
+    };
+    if (baseUrl) updates[OKFGEN_BASE_URL_ENV_KEY] = baseUrl;
+
+    if (apiKey && providers[provider].envKey) {
+      const shouldSaveKey = interactive
+        ? unwrap(await p.confirm({ message: "Save the API key to ~/.okfgen/.env for future sessions?", initialValue: false }))
+        : false;
+      if (shouldSaveKey) updates[providers[provider].envKey!] = apiKey;
+    }
+
+    await saveOkfgenEnv(updates);
+    p.log.success(`Saved ${providers[provider].label} with model ${model}`);
+  });
+
 program
   .command("generate", { isDefault: true })
   .alias("update")
@@ -68,17 +123,6 @@ program
     const project = await loadProjectConfig(flags.config);
     const configDirectory = project.path ? path.dirname(project.path) : process.cwd();
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !flags.print);
-    if (interactive && !isInteractiveShellActive()) {
-      await showFirstRunWordmark();
-      console.log(boxen(`${pc.bold(pc.cyan("OKFgen"))}\n${pc.dim("Generate portable Open Knowledge Format bundles")}\n\n${pc.dim("Built with love by Arindam · github.com/Arindam200")}`, {
-        borderStyle: "round",
-        borderColor: "cyan",
-        padding: 1,
-        margin: { top: 1, bottom: 1 },
-      }));
-      p.log.info(`${pc.dim("Interactive mode")}  ${pc.green("ready")}`);
-    }
-
     const environmentProvider = resolveProvider(flags.provider);
     const providerResolution = environmentProvider.value ? environmentProvider : {
       value: project.config.provider,
@@ -86,7 +130,7 @@ program
     };
     const provider = providerResolution.value
       ? parseProvider(providerResolution.value)
-      : await promptProvider(interactive);
+      : "nebius";
     if (interactive && providerResolution.value && providerResolution.source !== "flag") {
       p.log.info(`${providers[provider].label} selected from ${providerResolution.envKey ?? providerResolution.source}`);
     }
@@ -417,4 +461,31 @@ function parsePort(value: string): number {
 function resolveProjectPath(value: string, configDirectory: string): string {
   if (/^https?:\/\//i.test(value) || path.isAbsolute(value)) return value;
   return path.resolve(configDirectory, value);
+}
+
+async function showInteractiveBranding(alwaysShowWordmark = false): Promise<void> {
+  if (alwaysShowWordmark) showWordmark();
+  else await showFirstRunWordmark();
+  const project = await loadProjectConfig();
+  const configuredProvider = resolveProvider().value ?? project.config.provider ?? "nebius";
+  const provider = parseProvider(configuredProvider);
+  const model = resolveConfigValue(OKFGEN_MODEL_ENV_KEY).value
+    ?? project.config.model
+    ?? requireDefaultModel(provider);
+  console.log(boxen([
+    `${pc.cyan(">_")}  ${pc.bold("OKFgen")}  ${pc.dim(`v${VERSION}`)}`,
+    "",
+    `${pc.dim("model:")}     ${pc.bold(model)}  ${pc.cyan("/model to change")}`,
+    `${pc.dim("directory:")} ${pc.bold(formatHomePath(process.cwd()))}`,
+  ].join("\n"), {
+    borderStyle: "round",
+    borderColor: "cyan",
+    padding: { left: 1, right: 1 },
+    margin: { top: 1, bottom: 1 },
+  }));
+  console.log(`${pc.dim("Built with love by")} ${terminalLink("Arindam", "https://github.com/Arindam200")}`);
+}
+
+function terminalLink(label: string, url: string): string {
+  return `\u001B]8;;${url}\u0007${pc.cyan(label)}\u001B]8;;\u0007`;
 }

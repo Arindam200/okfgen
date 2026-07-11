@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commandHelpText, firstRunMarkerPath, splitCommandLine } from "./interactive.js";
+import { commandHelpText, commandSuggestions, firstRunMarkerPath, splitCommandLine } from "./interactive.js";
 
 describe("interactive shell", () => {
   it("parses quoted slash-command arguments", () => {
@@ -21,5 +21,18 @@ describe("interactive shell", () => {
     for (const command of ["/generate", "/update", "/view", "/validate", "/providers", "/provider", "/model", "/api-key", "/status", "/config", "/commands", "/exit"]) {
       expect(help).toContain(command);
     }
+  });
+
+  it("suggests slash commands as their names are typed", () => {
+    expect(commandSuggestions("/").map((command) => command.name)).toContain("generate");
+    expect(commandSuggestions("/pro").map((command) => command.name)).toEqual(["providers", "provider"]);
+    expect(commandSuggestions("/val")).toMatchObject([
+      { syntax: "/validate [directory]", description: "Check an existing bundle" },
+    ]);
+  });
+
+  it("hides command suggestions after arguments begin", () => {
+    expect(commandSuggestions("/generate ")).toEqual([]);
+    expect(commandSuggestions("generate")).toEqual([]);
   });
 });

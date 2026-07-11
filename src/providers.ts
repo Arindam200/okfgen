@@ -21,6 +21,7 @@ export const providers: Record<ProviderName, ProviderDefinition> = {
     label: "Nebius Token Factory",
     hint: "Hosted open-source models through an OpenAI-compatible API",
     envKey: "NEBIUS_API_KEY",
+    defaultModel: "zai-org/GLM-5.2",
     requiresKey: true,
   },
   openrouter: {

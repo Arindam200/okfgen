@@ -1,6 +1,6 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { parse, stringify } from "yaml";
+import { parse } from "yaml";
 import { z } from "zod";
 import { providerNames } from "./providers.js";
 
@@ -59,13 +59,22 @@ export async function createProjectConfig(filePath = DEFAULT_PROJECT_CONFIG, for
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  const content = stringify({
-    provider: "ollama",
-    model: "qwen3:8b",
-    sources: ["./docs"],
-    output: "./okfgen-bundle",
-    log: true,
-  }, { lineWidth: 0 });
-  await writeFile(resolvedPath, `# OKFgen project configuration\n${content}`, "utf8");
+  const content = `# OKFgen project configuration
+# Nebius is the hosted default. Set NEBIUS_API_KEY in your environment.
+provider: nebius
+model: zai-org/GLM-5.2
+
+# To use a local model instead, replace the two lines above with:
+# provider: ollama
+# model: qwen3:8b
+# Other supported providers: openrouter, openai, anthropic
+
+# Add files, directories, or URLs that OKFgen should use as source material.
+sources:
+  - ./docs
+output: ./okfgen-bundle
+log: true
+`;
+  await writeFile(resolvedPath, content, "utf8");
   return resolvedPath;
 }
