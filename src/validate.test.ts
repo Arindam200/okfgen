@@ -5,12 +5,11 @@ import { describe, expect, it } from "vitest";
 import { validateBundle } from "./validate.js";
 
 describe("bundle validation", () => {
-  it("requires a versioned root index", async () => {
+  it("accepts a bundle without the optional root index", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-validate-"));
     await writeFile(path.join(root, "guide.md"), "---\ntype: Guide\n---\n\nBody.\n", "utf8");
     const result = await validateBundle(root);
-    expect(result.valid).toBe(false);
-    expect(result.issues).toContainEqual(expect.objectContaining({ file: "index.md", message: expect.stringContaining("must contain") }));
+    expect(result.valid).toBe(true);
   });
 
   it("reports links to missing heading anchors", async () => {
@@ -19,5 +18,13 @@ describe("bundle validation", () => {
     await writeFile(path.join(root, "guide.md"), "---\ntype: Guide\n---\n\n# Present\n", "utf8");
     const result = await validateBundle(root);
     expect(result.issues).toContainEqual(expect.objectContaining({ message: "Broken heading anchor: guide.md#missing" }));
+  });
+
+  it("requires log date groups to be newest first", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-validate-"));
+    await writeFile(path.join(root, "log.md"), "# Directory Update Log\n\n## 2026-07-10\n* **Creation**: Created.\n\n## 2026-07-11\n* **Update**: Updated.\n", "utf8");
+    const result = await validateBundle(root);
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({ message: "Log date groups must be ordered newest first." }));
   });
 });

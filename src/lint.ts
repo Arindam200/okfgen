@@ -17,7 +17,6 @@ interface ConceptDocument {
   file: string;
   title?: string;
   body: string;
-  data: Record<string, unknown>;
   links: string[];
 }
 
@@ -34,7 +33,6 @@ export async function lintBundle(directory: string, options: { strict?: boolean 
   for (const document of documents) {
     reportThinContent(document, issues);
     reportHeadingHierarchy(document, issues);
-    reportProvenance(document, issues);
   }
 
   return {
@@ -89,13 +87,6 @@ function reportHeadingHierarchy(document: ConceptDocument, issues: LintIssue[]):
   }
 }
 
-function reportProvenance(document: ConceptDocument, issues: LintIssue[]): void {
-  const sources = document.data.sources;
-  if (!document.data.resource && (!Array.isArray(sources) || sources.length === 0)) {
-    issues.push({ severity: "warning", file: document.file, rule: "source-provenance", message: "Concept does not declare resource or sources provenance." });
-  }
-}
-
 async function readConcept(root: string, absolute: string): Promise<ConceptDocument> {
   const file = toPosix(path.relative(root, absolute));
   const content = await readFile(absolute, "utf8");
@@ -105,11 +96,10 @@ async function readConcept(root: string, absolute: string): Promise<ConceptDocum
       file,
       title: typeof parsed.data.title === "string" ? parsed.data.title : undefined,
       body: parsed.content,
-      data: parsed.data,
       links: [...parsed.content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)].map((match) => match[1]!.trim()),
     };
   } catch {
-    return { file, body: content, data: {}, links: [] };
+    return { file, body: content, links: [] };
   }
 }
 

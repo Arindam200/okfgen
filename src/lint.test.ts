@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { lintBundle } from "./lint.js";
 
 describe("bundle linting", () => {
-  it("reports duplicate titles, orphans, thin content, heading jumps, and missing provenance", async () => {
+  it("reports duplicate titles, orphans, thin content, and heading jumps", async () => {
     const root = await fixture();
     const result = await lintBundle(root);
     const rules = result.issues.map((issue) => issue.rule);
@@ -13,7 +13,6 @@ describe("bundle linting", () => {
     expect(rules).toContain("no-orphan-concepts");
     expect(rules).toContain("substantive-content");
     expect(rules).toContain("heading-order");
-    expect(rules).toContain("source-provenance");
     expect(result.valid).toBe(true);
   });
 

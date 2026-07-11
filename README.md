@@ -174,7 +174,7 @@ okfgen lint ./payments-okfgen --strict
 okfgen lint ./payments-okfgen --json
 ```
 
-Linting detects duplicate concept titles, orphan concepts, thin content, skipped heading levels, missing provenance, broken Markdown links, and broken heading anchors. Warnings are informational by default; `--strict` treats them as failures for CI.
+Linting detects duplicate concept titles, orphan concepts, thin content, skipped heading levels, broken Markdown links, and broken heading anchors. Warnings are informational by default; `--strict` treats them as failures for CI.
 
 ### Explore a bundle
 

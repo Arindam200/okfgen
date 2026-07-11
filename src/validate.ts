@@ -22,7 +22,6 @@ export async function validateBundle(directory: string): Promise<ValidationResul
   const issues: ValidationIssue[] = [];
   const anchorsByFile = new Map<string, Set<string>>();
 
-  if (!fileSet.has("index.md")) issues.push({ severity: "error", file: "index.md", message: "Bundle root must contain index.md." });
   for (const file of files) {
     const relative = toPosix(path.relative(root, file));
     anchorsByFile.set(relative, headingAnchors(await readFile(file, "utf8")));
@@ -69,9 +68,7 @@ function validateIndex(file: string, content: string, issues: ValidationIssue[])
     try {
       const parsed = matter(content);
       body = parsed.content;
-      if (file === "index.md" && parsed.data.okf_version === undefined) {
-        issues.push({ severity: "error", file, message: "Bundle root index must declare okf_version." });
-      } else if (file === "index.md" && String(parsed.data.okf_version) !== "0.1") {
+      if (file === "index.md" && parsed.data.okf_version !== undefined && String(parsed.data.okf_version) !== "0.1") {
         issues.push({ severity: "warning", file, message: `Declared OKF version ${String(parsed.data.okf_version)} is not supported by this validator.` });
       }
     } catch (error) {
@@ -98,6 +95,13 @@ function validateLog(file: string, content: string, issues: ValidationIssue[]): 
   for (const date of dateHeadings) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
       issues.push({ severity: "error", file, message: `Log date heading must use YYYY-MM-DD: ${date}` });
+    }
+  }
+  const validDates = dateHeadings.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
+  for (let index = 1; index < validDates.length; index += 1) {
+    if (validDates[index]! > validDates[index - 1]!) {
+      issues.push({ severity: "error", file, message: "Log date groups must be ordered newest first." });
+      break;
     }
   }
 }
