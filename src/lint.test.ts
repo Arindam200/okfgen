@@ -20,6 +20,13 @@ describe("bundle linting", () => {
     const root = await fixture();
     await expect(lintBundle(root, { strict: true })).resolves.toMatchObject({ valid: false });
   });
+
+  it("reports malformed link encoding without crashing", async () => {
+    const root = await fixture();
+    await writeFile(path.join(root, "guides", "one.md"), "---\ntype: Guide\ntitle: One\n---\n\n[Malformed](%ZZ)\n", "utf8");
+    const result = await lintBundle(root);
+    expect(result.issues).toContainEqual(expect.objectContaining({ message: expect.stringContaining("not valid URL encoding") }));
+  });
 });
 
 async function fixture(): Promise<string> {

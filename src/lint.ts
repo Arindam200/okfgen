@@ -105,7 +105,12 @@ async function readConcept(root: string, absolute: string): Promise<ConceptDocum
 
 function resolveLink(from: string, rawTarget: string): string | undefined {
   if (/^(?:[a-z][a-z\d+.-]*:|#)/i.test(rawTarget)) return undefined;
-  const target = decodeURIComponent(rawTarget.split("#")[0] ?? "");
+  let target: string;
+  try {
+    target = decodeURIComponent(rawTarget.split("#")[0] ?? "");
+  } catch {
+    return undefined;
+  }
   if (!target.endsWith(".md")) return undefined;
   return target.startsWith("/")
     ? path.posix.normalize(target.slice(1))
