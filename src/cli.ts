@@ -9,14 +9,18 @@ import {
   loadOkfgenEnv,
   OKFGEN_BASE_URL_ENV_KEY,
   OKFGEN_MODEL_ENV_KEY,
+  OKFGEN_PROVIDER_ENV_KEY,
+  OKFGEN_RETRY_ATTEMPTS_ENV_KEY,
   resolveConfigValue,
   resolveProvider,
   resolveRetryAttempts,
   saveOkfgenEnv,
 } from "./config.js";
 import { friendlyError, PromptCancelledError, registerDiagnosticSecret, unwrapPrompt as unwrap } from "./diagnostics.js";
-import { isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, startInteractiveShell } from "./interactive.js";
+import { formatHomePath, isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, showWordmark, startInteractiveShell } from "./interactive.js";
+import { lintBundle } from "./lint.js";
 import { fetchNebiusModels, formatModelLabel, providerNames, providers, resolveApiKey, type ProviderName } from "./providers.js";
+import { createProjectConfig, DEFAULT_PROJECT_CONFIG, loadProjectConfig } from "./project-config.js";
 import { validateBundle } from "./validate.js";
 import { VERSION } from "./version.js";
 import { startViewer } from "./viewer.js";
@@ -25,8 +29,9 @@ interface GenerateFlags {
   provider?: string;
   model?: string;
   apiKey?: string;
-  output: string;
+  output?: string;
   source?: string[];
+  config?: string;
   baseUrl?: string;
   force?: boolean;
   log: boolean;
@@ -43,6 +48,60 @@ const program = new Command()
   .showHelpAfterError()
   .configureHelp({ sortOptions: true, sortSubcommands: true });
 
+program.hook("preAction", async () => {
+  const machineReadable = cliArguments.includes("--json") || cliArguments.includes("--print");
+  if (process.stdin.isTTY && process.stdout.isTTY && !machineReadable && !isInteractiveShellActive()) {
+    await showInteractiveBranding(true);
+  }
+});
+
+program
+  .command("provider")
+  .description("Configure the default LLM provider and model")
+  .argument("[provider]", "LLM provider")
+  .addOption(new Option("-m, --model <model>", "provider model ID"))
+  .option("--api-key <key>", "provider API key (prefer a masked prompt)")
+  .option("--base-url <url>", "override the provider base URL")
+  .action(async (providerArgument: string | undefined, flags: Pick<GenerateFlags, "model" | "apiKey" | "baseUrl">) => {
+    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    const provider = providerArgument ? parseProvider(providerArgument) : await promptProvider(interactive);
+    let apiKey = resolveApiKey(provider, flags.apiKey);
+
+    if (providers[provider].requiresKey && !apiKey) {
+      if (!interactive) throw new Error(`Set ${providers[provider].envKey} or use --api-key.`);
+      apiKey = unwrap(await p.password({
+        message: `Paste your ${providers[provider].label} API key`,
+        mask: "*",
+        validate: (value) => String(value ?? "").trim() ? undefined : "An API key is required",
+      }));
+      registerDiagnosticSecret(providers[provider].envKey ?? "API_KEY", apiKey);
+    }
+
+    const baseUrl = resolveConfigValue(OKFGEN_BASE_URL_ENV_KEY, flags.baseUrl).value;
+    let model = flags.model?.trim();
+    if (!model) {
+      if (interactive) model = await promptModel(provider, apiKey, baseUrl);
+      else if (provider === "nebius") throw new Error("Choose a Nebius model with --model when running non-interactively.");
+      else model = requireDefaultModel(provider);
+    }
+
+    const updates: Record<string, string> = {
+      [OKFGEN_PROVIDER_ENV_KEY]: provider,
+      [OKFGEN_MODEL_ENV_KEY]: model,
+    };
+    if (baseUrl) updates[OKFGEN_BASE_URL_ENV_KEY] = baseUrl;
+
+    if (apiKey && providers[provider].envKey) {
+      const shouldSaveKey = interactive
+        ? unwrap(await p.confirm({ message: "Save the API key to ~/.okfgen/.env for future sessions?", initialValue: false }))
+        : false;
+      if (shouldSaveKey) updates[providers[provider].envKey!] = apiKey;
+    }
+
+    await saveOkfgenEnv(updates);
+    p.log.success(`Saved ${providers[provider].label} with model ${model}`);
+  });
+
 program
   .command("generate", { isDefault: true })
   .alias("update")
@@ -51,8 +110,9 @@ program
   .addOption(new Option("-p, --provider <provider>", "LLM provider").choices([...providerNames]))
   .option("-m, --model <model>", "provider model ID")
   .option("--api-key <key>", "provider API key (prefer the provider environment variable in automation)")
-  .option("-o, --output <directory>", "bundle output directory", "./okfgen-bundle")
+  .option("-o, --output <directory>", "bundle output directory")
   .option("-s, --source <source...>", "source files, directories, or URLs")
+  .option("--config <file>", "project configuration file")
   .option("--base-url <url>", "override the provider base URL")
   .option("--force", "write into a non-empty directory that is not an existing OKF bundle")
   .option("--no-log", "do not generate log.md")
@@ -60,22 +120,17 @@ program
   .option("--view-port <port>", "visual explorer port", "4173")
   .option("--print", "run once and print the machine-readable result")
   .action(async (request: string | undefined, flags: GenerateFlags) => {
+    const project = await loadProjectConfig(flags.config);
+    const configDirectory = project.path ? path.dirname(project.path) : process.cwd();
     const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !flags.print);
-    if (interactive && !isInteractiveShellActive()) {
-      await showFirstRunWordmark();
-      console.log(boxen(`${pc.bold(pc.cyan("OKFgen"))}\n${pc.dim("Generate portable Open Knowledge Format bundles")}\n\n${pc.dim("Built with love by Arindam · github.com/Arindam200")}`, {
-        borderStyle: "round",
-        borderColor: "cyan",
-        padding: 1,
-        margin: { top: 1, bottom: 1 },
-      }));
-      p.log.info(`${pc.dim("Interactive mode")}  ${pc.green("ready")}`);
-    }
-
-    const providerResolution = resolveProvider(flags.provider);
+    const environmentProvider = resolveProvider(flags.provider);
+    const providerResolution = environmentProvider.value ? environmentProvider : {
+      value: project.config.provider,
+      source: project.config.provider ? "default" as const : "unset" as const,
+    };
     const provider = providerResolution.value
       ? parseProvider(providerResolution.value)
-      : await promptProvider(interactive);
+      : "nebius";
     if (interactive && providerResolution.value && providerResolution.source !== "flag") {
       p.log.info(`${providers[provider].label} selected from ${providerResolution.envKey ?? providerResolution.source}`);
     }
@@ -105,9 +160,10 @@ program
       p.log.success(`${providers[provider].envKey} detected · credential value remains hidden`);
     }
 
-    let model = resolveConfigValue(OKFGEN_MODEL_ENV_KEY, flags.model).value;
+    const baseUrl = resolveConfigValue(OKFGEN_BASE_URL_ENV_KEY, flags.baseUrl).value ?? project.config.baseUrl;
+    let model = resolveConfigValue(OKFGEN_MODEL_ENV_KEY, flags.model).value ?? project.config.model;
     if (!model) {
-      if (interactive) model = await promptModel(provider, apiKey, resolveConfigValue(OKFGEN_BASE_URL_ENV_KEY, flags.baseUrl).value);
+      if (interactive) model = await promptModel(provider, apiKey, baseUrl);
       else if (provider === "nebius") throw new Error("Choose a Nebius model with --model when running non-interactively.");
       else model = requireDefaultModel(provider);
     }
@@ -121,7 +177,7 @@ program
       : undefined);
     if (!generationRequest) throw new Error("Provide a generation request as an argument.");
 
-    let sources = flags.source ?? [];
+    let sources = (flags.source ?? project.config.sources).map((source) => resolveProjectPath(source, configDirectory));
     if (interactive && sources.length === 0) {
       const sourceInput = unwrap(await p.text({
         message: "Source material (optional)",
@@ -130,17 +186,18 @@ program
       sources = sourceInput.trim() ? sourceInput.split(",").map((value) => value.trim()).filter(Boolean) : [];
     }
 
+    const configuredOutput = resolveProjectPath(flags.output ?? project.config.output, configDirectory);
     const outputDirectory = interactive
       ? unwrap(await p.text({
           message: "Where should the bundle be written?",
-          placeholder: flags.output,
-          defaultValue: flags.output,
+          placeholder: configuredOutput,
+          defaultValue: configuredOutput,
           validate: (value) => String(value ?? "").trim() ? undefined : "An output directory is required",
         }))
-      : flags.output;
+      : configuredOutput;
     const includeLog = interactive
-      ? unwrap(await p.confirm({ message: "Create a generation log.md?", initialValue: flags.log }))
-      : flags.log;
+      ? unwrap(await p.confirm({ message: "Create a generation log.md?", initialValue: flags.log && project.config.log }))
+      : flags.log && project.config.log;
     const existingBundle = await inspectExistingBundle(outputDirectory);
     const shouldView = flags.view ?? (interactive
       ? unwrap(await p.confirm({ message: "Open the visual explorer after generation?", initialValue: true }))
@@ -170,8 +227,10 @@ program
         provider,
         model,
         apiKey,
-        baseUrl: resolveConfigValue(OKFGEN_BASE_URL_ENV_KEY, flags.baseUrl).value,
-        maxRetries: resolveRetryAttempts(),
+        baseUrl,
+        maxRetries: resolveConfigValue(OKFGEN_RETRY_ATTEMPTS_ENV_KEY).value
+          ? resolveRetryAttempts()
+          : project.config.retries ?? resolveRetryAttempts(),
         outputDirectory,
         sources,
         force: flags.force,
@@ -214,13 +273,24 @@ program
         : `Validation passed · next: okfgen view ${outputDirectory}`);
     } else {
       process.stdout.write(`${JSON.stringify({
-        output: path.resolve(flags.output),
+        output: path.resolve(outputDirectory),
         mode: result.mode,
         concepts: result.plan.concepts.length,
         files: result.files.length,
         warnings: warnings.length,
       })}\n`);
     }
+  });
+
+program
+  .command("init")
+  .description("Create an OKFgen project configuration")
+  .argument("[file]", "configuration file", DEFAULT_PROJECT_CONFIG)
+  .option("--force", "replace an existing configuration")
+  .action(async (file: string, flags: { force?: boolean }) => {
+    const created = await createProjectConfig(file, flags.force);
+    p.log.success(`Created ${path.relative(process.cwd(), created) || path.basename(created)}`);
+    p.log.info(`Edit the sources and model, then run ${pc.bold("okfgen generate \"Describe this knowledge\"")}`);
   });
 
 program
@@ -260,6 +330,27 @@ program
       const status = result.valid ? pc.green("valid") : pc.red("invalid");
       process.stdout.write(`${status}  ${result.filesChecked} Markdown files checked · ${result.issues.length} issue${result.issues.length === 1 ? "" : "s"}\n`);
       if (result.valid) process.stdout.write(`${pc.dim("Hint:")} Explore it with okfgen view ${directory}\n`);
+    }
+    if (!result.valid) process.exitCode = 1;
+  });
+
+program
+  .command("lint")
+  .description("Check an OKF bundle for structural and editorial quality issues")
+  .argument("[directory]", "bundle directory", ".")
+  .option("--json", "print machine-readable JSON")
+  .option("--strict", "treat warnings as failures")
+  .action(async (directory: string, flags: { json?: boolean; strict?: boolean }) => {
+    const result = await lintBundle(directory, { strict: flags.strict });
+    if (flags.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      for (const issue of result.issues) {
+        const label = issue.severity === "error" ? pc.red("error") : pc.yellow("warn ");
+        process.stdout.write(`${label}  ${pc.bold(issue.file)} [${issue.rule}]: ${issue.message}\n`);
+      }
+      const status = result.valid ? pc.green("clean") : pc.red("failed");
+      process.stdout.write(`${status}  ${result.filesChecked} Markdown files checked · ${result.issues.length} issue${result.issues.length === 1 ? "" : "s"}\n`);
     }
     if (!result.valid) process.exitCode = 1;
   });
@@ -366,4 +457,35 @@ function parsePort(value: string): number {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error(`Invalid port: ${value}`);
   return port;
+}
+function resolveProjectPath(value: string, configDirectory: string): string {
+  if (/^https?:\/\//i.test(value) || path.isAbsolute(value)) return value;
+  return path.resolve(configDirectory, value);
+}
+
+async function showInteractiveBranding(alwaysShowWordmark = false): Promise<void> {
+  if (alwaysShowWordmark) showWordmark();
+  else await showFirstRunWordmark();
+  const project = await loadProjectConfig();
+  const configuredProvider = resolveProvider().value ?? project.config.provider ?? "nebius";
+  const provider = parseProvider(configuredProvider);
+  const model = resolveConfigValue(OKFGEN_MODEL_ENV_KEY).value
+    ?? project.config.model
+    ?? requireDefaultModel(provider);
+  console.log(boxen([
+    `${pc.cyan(">_")}  ${pc.bold("OKFgen")}  ${pc.dim(`v${VERSION}`)}`,
+    "",
+    `${pc.dim("model:")}     ${pc.bold(model)}  ${pc.cyan("/model to change")}`,
+    `${pc.dim("directory:")} ${pc.bold(formatHomePath(process.cwd()))}`,
+  ].join("\n"), {
+    borderStyle: "round",
+    borderColor: "cyan",
+    padding: { left: 1, right: 1 },
+    margin: { top: 1, bottom: 1 },
+  }));
+  console.log(`${pc.dim("Built with love by")} ${terminalLink("Arindam", "https://github.com/Arindam200")}`);
+}
+
+function terminalLink(label: string, url: string): string {
+  return `\u001B]8;;${url}\u0007${pc.cyan(label)}\u001B]8;;\u0007`;
 }

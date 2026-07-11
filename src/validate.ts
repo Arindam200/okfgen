@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
 import { parse as parseYaml } from "yaml";
+import { resolveMarkdownLinkTarget } from "./link-target.js";
 
 export interface ValidationIssue {
   severity: "error" | "warning";
@@ -20,15 +21,24 @@ export async function validateBundle(directory: string): Promise<ValidationResul
   const files = await findMarkdownFiles(root);
   const fileSet = new Set(files.map((file) => toPosix(path.relative(root, file))));
   const issues: ValidationIssue[] = [];
+  const anchorsByFile = new Map<string, Set<string>>();
+  const contentByFile = new Map<string, string>();
+
+  for (const file of files) {
+    const relative = toPosix(path.relative(root, file));
+    const content = await readFile(file, "utf8");
+    contentByFile.set(relative, content);
+    anchorsByFile.set(relative, headingAnchors(content));
+  }
 
   for (const file of files) {
     const relative = toPosix(path.relative(root, file));
     const name = path.basename(file);
-    const content = await readFile(file, "utf8");
+    const content = contentByFile.get(relative)!;
     if (name === "index.md") validateIndex(relative, content, issues);
     else if (name === "log.md") validateLog(relative, content, issues);
     else validateConcept(relative, content, issues);
-    validateLinks(relative, content, fileSet, issues);
+    validateLinks(relative, content, fileSet, anchorsByFile, issues);
   }
 
   return {
@@ -91,21 +101,47 @@ function validateLog(file: string, content: string, issues: ValidationIssue[]): 
       issues.push({ severity: "error", file, message: `Log date heading must use YYYY-MM-DD: ${date}` });
     }
   }
-}
-
-function validateLinks(file: string, content: string, files: Set<string>, issues: ValidationIssue[]): void {
-  for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-    const rawTarget = match[1]?.trim();
-    if (!rawTarget || /^(?:[a-z][a-z\d+.-]*:|#)/i.test(rawTarget)) continue;
-    const cleanTarget = decodeURIComponent(rawTarget.split("#")[0] ?? "");
-    if (!cleanTarget || cleanTarget.endsWith("/")) continue;
-    const target = cleanTarget.startsWith("/")
-      ? path.posix.normalize(cleanTarget.slice(1))
-      : path.posix.normalize(path.posix.join(path.posix.dirname(file), cleanTarget));
-    if (target.endsWith(".md") && !files.has(target)) {
-      issues.push({ severity: "warning", file, message: `Broken concept link: ${rawTarget}` });
+  const validDates = dateHeadings.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)));
+  for (let index = 1; index < validDates.length; index += 1) {
+    if (validDates[index]! > validDates[index - 1]!) {
+      issues.push({ severity: "error", file, message: "Log date groups must be ordered newest first." });
+      break;
     }
   }
+}
+
+function validateLinks(file: string, content: string, files: Set<string>, anchorsByFile: Map<string, Set<string>>, issues: ValidationIssue[]): void {
+  for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+    const rawTarget = match[1]?.trim();
+    if (!rawTarget) continue;
+    const resolved = resolveMarkdownLinkTarget(file, rawTarget);
+    if (resolved.kind === "invalid") {
+      issues.push({ severity: "warning", file, message: `Link target is not valid URL encoding: ${rawTarget}` });
+      continue;
+    }
+    if (resolved.kind === "ignored") continue;
+    if (resolved.hasMarkdownPath && !files.has(resolved.path)) {
+      issues.push({ severity: "warning", file, message: `Broken concept link: ${rawTarget}` });
+    } else if (resolved.fragment && !anchorsByFile.get(resolved.path)?.has(slugify(resolved.fragment))) {
+      issues.push({ severity: "warning", file, message: `Broken heading anchor: ${rawTarget}` });
+    }
+  }
+}
+
+function headingAnchors(content: string): Set<string> {
+  const anchors = new Set<string>();
+  const counts = new Map<string, number>();
+  for (const match of content.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gm)) {
+    const base = slugify(match[1] ?? "");
+    const count = counts.get(base) ?? 0;
+    anchors.add(count === 0 ? base : `${base}-${count}`);
+    counts.set(base, count + 1);
+  }
+  return anchors;
+}
+
+function slugify(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/<[^>]+>/g, "").replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s+/g, "-");
 }
 
 async function findMarkdownFiles(directory: string): Promise<string[]> {

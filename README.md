@@ -41,7 +41,7 @@ Run `okfgen` with a terminal attached to open the interactive command center:
 okfgen
 ```
 
-The large OKFgen wordmark is shown only on the first interactive run. After that, startup stays compact. Every action in the persistent shell uses a slash command:
+The persistent shell shows the large OKFgen wordmark on its first run, followed by a compact startup panel with the effective model and working directory. Direct interactive commands show the same branding and context before their prompts. Type `/` to see live command suggestions with short descriptions; the list filters as you continue typing. Every action in the persistent shell uses a slash command:
 
 - `/generate [request]` starts the guided generation flow
 - `/update [request]` refreshes the last generated bundle with its remembered sources
@@ -62,7 +62,7 @@ API keys entered during a run stay in memory unless you explicitly choose to sav
 
 ### Configuration and credentials
 
-OKFgen resolves settings in this order: command flags, exported terminal environment, `~/.okfgen/.env`, then interactive prompts and provider defaults. If exactly one supported provider credential is exported, the interactive CLI selects that provider automatically. `/status` reports the effective provider, model, credential status, and source without displaying secrets.
+OKFgen resolves settings in this order: command flags, exported terminal environment, `~/.okfgen/.env`, project configuration, then interactive prompts and provider defaults. If no provider is configured, Nebius is used. If exactly one supported provider credential is exported, the interactive CLI selects that provider automatically. `/status` reports the effective provider, model, credential status, and source without displaying secrets.
 
 ```bash
 export OPENROUTER_API_KEY="..."
@@ -75,11 +75,23 @@ When a key is entered through a masked prompt or `/api-key`, OKFgen asks whether
 
 Managed settings are `OKFGEN_PROVIDER`, `OKFGEN_MODEL`, `OKFGEN_BASE_URL`, and `OKFGEN_RETRY_ATTEMPTS`. Provider requests default to three retries; the retry setting accepts values from `0` through `10`.
 
+Configure and save a provider/model pair without starting generation:
+
+```bash
+okfgen provider
+```
+
+In an interactive terminal, this command selects a provider and model, prompts securely for a missing credential, and optionally saves that credential. Provider and model defaults are written to `~/.okfgen/.env`. For scripted setup, pass the provider and model explicitly; credentials supplied with `--api-key` are used for setup but are not persisted non-interactively:
+
+```bash
+okfgen provider openrouter --model openai/gpt-oss-120b --api-key "$OPENROUTER_API_KEY"
+```
+
 ## Providers
 
 | Provider | Default model | Environment variable | Notes |
 | --- | --- | --- | --- |
-| Nebius Token Factory | Selected from the live catalog | `NEBIUS_API_KEY` | Hosted open-source models through an OpenAI-compatible endpoint |
+| Nebius Token Factory | `zai-org/GLM-5.2` | `NEBIUS_API_KEY` | Hosted default; interactive selection uses the live model catalog |
 | OpenRouter | `openai/gpt-oss-120b` | `OPENROUTER_API_KEY` | Open and proprietary models through one router |
 | Ollama | `qwen3:8b` | None | Local models; Ollama must be running |
 | OpenAI | `gpt-5.4-mini` | `OPENAI_API_KEY` | OpenAI API models |
@@ -93,9 +105,38 @@ export NEBIUS_API_KEY="..."
 
 `--api-key` is available for one-off runs, but environment variables are safer because shell history and CI logs can expose command arguments.
 
-For Nebius, the interactive flow validates the API key by loading the current Token Factory model catalog. The searchable selector shows readable names such as `GPT OSS 120B (OpenAI)` while retaining the exact model ID as a hint. Non-interactive Nebius runs require `--model`, so the CLI never silently picks a model.
+For Nebius, an interactive model-selection flow validates the API key by loading the current Token Factory model catalog. The searchable selector shows readable names such as `GPT OSS 120B (OpenAI)` while retaining the exact model ID as a hint. New project configurations pin `zai-org/GLM-5.2`, so they work consistently in automation. A non-interactive Nebius run without a configured model still requires `--model`.
 
 ## Command Reference
+
+### Initialize a project
+
+Create a reusable project configuration:
+
+```bash
+okfgen init
+```
+
+This writes `okfgen.config.yml`. Generation automatically discovers that file in the current directory or a parent directory:
+
+```yaml
+# Nebius is the hosted default. Set NEBIUS_API_KEY in your environment.
+provider: nebius
+model: zai-org/GLM-5.2
+
+# To use a local model instead, replace the two lines above with:
+# provider: ollama
+# model: qwen3:8b
+# Other supported providers: openrouter, openai, anthropic
+
+# Add files, directories, or URLs that OKFgen should use as source material.
+sources:
+  - ./docs
+output: ./okfgen-bundle
+log: true
+```
+
+Paths are resolved relative to the configuration file. Command flags override environment or saved settings, which override project configuration. Use `--config <file>` to select another file and `okfgen init --force` to replace an existing one.
 
 ### Generate a bundle
 
@@ -113,6 +154,7 @@ Options:
 - `-m, --model`: provider model ID
 - `--api-key`: one-off provider key
 - `-s, --source`: one or more files, directories, or HTTP(S) URLs
+- `--config`: explicit `okfgen.config.yml` path
 - `-o, --output`: output directory, default `./okfgen-bundle`
 - `--base-url`: override an OpenAI-compatible or Ollama endpoint
 - `--force`: allow writing into a non-empty directory that is not an existing OKF bundle
@@ -142,6 +184,18 @@ okfgen validate ./payments-okfgen --json
 
 Validation checks frontmatter, required `type` fields, reserved files, index/log structure, and reports broken internal links as warnings.
 
+### Lint bundle quality
+
+Run editorial and graph-quality checks in addition to OKF conformance validation:
+
+```bash
+okfgen lint ./payments-okfgen
+okfgen lint ./payments-okfgen --strict
+okfgen lint ./payments-okfgen --json
+```
+
+Linting detects duplicate concept titles, orphan concepts, thin content, skipped heading levels, broken Markdown links, and broken heading anchors. Warnings are informational by default; `--strict` treats them as failures for CI.
+
 ### Explore a bundle
 
 ```bash
@@ -170,6 +224,13 @@ okfgen generate "Document this repository" --source . --view
 
 ```bash
 okfgen providers
+```
+
+Configure the default provider and model without starting generation. Omit the provider in a terminal for guided selection, or provide it with `--model` for scripted setup:
+
+```bash
+okfgen provider
+okfgen provider ollama --model qwen3:8b
 ```
 
 ## Generated Bundle

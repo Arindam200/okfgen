@@ -17,9 +17,25 @@ import {
 } from "./config.js";
 import { friendlyError, PromptCancelledError, registerDiagnosticSecret, unwrapPrompt } from "./diagnostics.js";
 import { providerNames, providers, type ProviderName } from "./providers.js";
+import { loadProjectConfig } from "./project-config.js";
 
 let shellActive = false;
 const session: { output?: string; sources?: string[] } = {};
+
+const shellCommands = [
+  { syntax: "/generate [request]", name: "generate", description: "Create or update an OKF bundle" },
+  { syntax: "/update [request]", name: "update", description: "Refresh the last generated bundle" },
+  { syntax: "/view [directory]", name: "view", description: "Open the local document explorer" },
+  { syntax: "/validate [directory]", name: "validate", description: "Check an existing bundle" },
+  { syntax: "/providers", name: "providers", description: "List providers and API-key variables" },
+  { syntax: "/provider [name]", name: "provider", description: "Change provider for this session" },
+  { syntax: "/model [id]", name: "model", description: "Change model for this session" },
+  { syntax: "/api-key", name: "api-key", description: "Enter or replace a credential" },
+  { syntax: "/status", name: "status", description: "Show effective config and its sources" },
+  { syntax: "/config save|reset", name: "config", description: "Manage saved provider/model defaults" },
+  { syntax: "/commands", name: "commands", description: "Show the complete command guide" },
+  { syntax: "/exit", name: "exit", description: "Close OKFgen" },
+] as const;
 
 const WORDMARK = [
   "   ____  __ __ ______",
@@ -48,8 +64,12 @@ export async function showFirstRunWordmark(markerPath = firstRunMarkerPath()): P
     return false;
   }
 
-  process.stdout.write(`${pc.cyan(WORDMARK)}\n\n`);
+  showWordmark();
   return true;
+}
+
+export function showWordmark(): void {
+  process.stdout.write(`${pc.cyan(WORDMARK)}\n\n`);
 }
 
 export function splitCommandLine(input: string): string[] {
@@ -84,26 +104,36 @@ export function splitCommandLine(input: string): string[] {
   return tokens;
 }
 
+export function commandSuggestions(input: string): typeof shellCommands[number][] {
+  if (!input.startsWith("/") || /\s/.test(input)) return [];
+  const query = input.slice(1).toLowerCase();
+  return shellCommands.filter((command) => command.name.startsWith(query));
+}
+
 export async function startInteractiveShell(program: Command, version: string): Promise<void> {
   shellActive = true;
   await showFirstRunWordmark();
+  const project = await loadProjectConfig();
   const startupProvider = resolveProvider();
-  const startupProviderName = startupProvider.value && providerNames.includes(startupProvider.value as ProviderName)
-    ? startupProvider.value as ProviderName
-    : undefined;
+  const configuredProvider = startupProvider.value ?? project.config.provider ?? "nebius";
+  const startupProviderName = providerNames.includes(configuredProvider as ProviderName)
+    ? configuredProvider as ProviderName
+    : "nebius";
   const startupModel = resolveConfigValue(OKFGEN_MODEL_ENV_KEY);
+  const configuredModel = startupModel.value ?? project.config.model ?? providers[startupProviderName].defaultModel;
   console.log(boxen([
     `${pc.cyan(">_")}  ${pc.bold("OKFgen")}  ${pc.dim(`v${version}  Open Knowledge Format toolkit`)}`,
-    `${pc.dim("provider:")}  ${startupProviderName ? pc.bold(providers[startupProviderName].label) : pc.yellow("choose with /provider")} ${sourceLabel(startupProvider.source, startupProvider.envKey)}`,
-    `${pc.dim("model:")}     ${startupModel.value ? pc.bold(startupModel.value) : pc.dim("choose during /generate")} ${sourceLabel(startupModel.source, startupModel.envKey)}`,
+    "",
+    `${pc.dim("model:")}     ${configuredModel ? pc.bold(configuredModel) : pc.dim("choose during /generate")}  ${pc.cyan("/model to change")}`,
     `${pc.dim("directory:")} ${pc.bold(formatHomePath(process.cwd()))}`,
   ].join("\n"), { borderStyle: "round", borderColor: "cyan", padding: { left: 1, right: 1 }, margin: { bottom: 1 } }));
+  console.log(`${pc.dim("Built with love by")} ${terminalLink("Arindam", "https://github.com/Arindam200")}`);
   console.log(`${pc.dim("—")} ${pc.cyan("Ready")} ${pc.dim("— /generate to start · /commands for everything")}`);
 
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   try {
     while (true) {
-      const input = (await terminal.question(`\n${pc.cyan(">")} `)).trim();
+      const input = (await questionWithCommandHints(terminal, `\n${pc.cyan(">")} `)).trim();
       if (!input) continue;
       if (!input.startsWith("/")) {
         console.log(pc.yellow("Use a slash command to get started."));
@@ -178,6 +208,10 @@ export async function startInteractiveShell(program: Command, version: string): 
   console.log(pc.dim("Goodbye."));
 }
 
+function terminalLink(label: string, url: string): string {
+  return `\u001B]8;;${url}\u0007${pc.cyan(label)}\u001B]8;;\u0007`;
+}
+
 export function isInteractiveShellActive(): boolean {
   return shellActive;
 }
@@ -190,18 +224,7 @@ export function rememberGeneration(output: string, sources: string[]): void {
 export function commandHelpText(): string {
   return [
     `${pc.bold("Commands")}`,
-    `  ${pc.cyan("/generate [request]")}     Create or update an OKF bundle`,
-    `  ${pc.cyan("/update [request]")}       Refresh the last generated bundle`,
-    `  ${pc.cyan("/view [directory]")}       Open the local document explorer`,
-    `  ${pc.cyan("/validate [directory]")}   Check an existing bundle`,
-    `  ${pc.cyan("/providers")}              List providers and API-key variables`,
-    `  ${pc.cyan("/provider [name]")}        Change provider for this session`,
-    `  ${pc.cyan("/model [id]")}             Change model for this session`,
-    `  ${pc.cyan("/api-key")}                Enter or replace a credential`,
-    `  ${pc.cyan("/status")}                 Show effective config and its sources`,
-    `  ${pc.cyan("/config save|reset")}      Manage saved provider/model defaults`,
-    `  ${pc.cyan("/commands")}               Show this guide`,
-    `  ${pc.cyan("/exit")}                   Close OKFgen`,
+    ...shellCommands.map((command) => `  ${pc.cyan(command.syntax.padEnd(28))}${command.description}`),
     "",
     `${pc.bold("Examples")}`,
     `  ${pc.dim('/generate "Document our payments API" --source ./docs')}`,
@@ -211,6 +234,42 @@ export function commandHelpText(): string {
     "",
     `${pc.dim("Tip: quote requests or paths that contain spaces.")}`,
   ].join("\n");
+}
+
+async function questionWithCommandHints(
+  terminal: ReturnType<typeof createInterface>,
+  prompt: string,
+): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return terminal.question(prompt);
+
+  let active = true;
+  let renderPending = false;
+  const render = (): void => {
+    renderPending = false;
+    if (!active) return;
+    const suggestions = commandSuggestions(terminal.line);
+    process.stdout.write("\u001B7\n\u001B[0J");
+    if (suggestions.length > 0) {
+      process.stdout.write(suggestions.map((command) =>
+        `  ${pc.cyan(command.syntax.padEnd(28))}${pc.dim(command.description)}`
+      ).join("\n"));
+    }
+    process.stdout.write("\u001B8");
+  };
+  const onKeypress = (): void => {
+    if (renderPending) return;
+    renderPending = true;
+    setImmediate(render);
+  };
+
+  process.stdin.on("keypress", onKeypress);
+  try {
+    return await terminal.question(prompt);
+  } finally {
+    active = false;
+    process.stdin.off("keypress", onKeypress);
+    process.stdout.write("\u001B7\n\u001B[0J\u001B8");
+  }
 }
 
 function shellInvocation(command: string, rest: string[]): string[] {
@@ -307,7 +366,7 @@ function commandHint(command: string): string | undefined {
   return undefined;
 }
 
-function formatHomePath(directory: string): string {
+export function formatHomePath(directory: string): string {
   const home = homedir();
   return directory === home ? "~" : directory.startsWith(`${home}${path.sep}`) ? `~${directory.slice(home.length)}` : directory;
 }

@@ -31,7 +31,23 @@ Supported providers are `nebius`, `openrouter`, `ollama`, `openai`, and `anthrop
 
 OKFgen reads exported provider credentials and `OKFGEN_PROVIDER`, `OKFGEN_MODEL`, `OKFGEN_BASE_URL`, and `OKFGEN_RETRY_ATTEMPTS`. Exported values override `~/.okfgen/.env`. Interactive users may opt in to saving a masked credential there; never save or modify credentials without that explicit confirmation.
 
-Interactive Nebius runs load the live model catalog after credential entry. In non-interactive or CI runs, always pass the exact Nebius model ID with `--model`; the CLI intentionally has no automatic Nebius model choice.
+Nebius is the default provider, and new `okfgen.config.yml` files pin `zai-org/GLM-5.2`. Interactive Nebius model selection loads the live catalog after credential entry. In non-interactive or CI runs, ensure the model comes from `--model`, `OKFGEN_MODEL`, saved settings, or project configuration; an unconfigured Nebius run requires an explicit model.
+
+Initialize reusable project settings when the repository does not already have them:
+
+```bash
+okfgen init
+```
+
+This creates `okfgen.config.yml` with Nebius and `zai-org/GLM-5.2`, example sources, and an output path. Inspect and adjust its sources before generation. Paths in this file are relative to the configuration file.
+
+To configure user-level provider and model defaults without generating a bundle, use the standalone setup command:
+
+```bash
+okfgen provider
+```
+
+Use its masked interactive credential prompt when a person is present. For automation, pass the provider and model explicitly, for example `okfgen provider ollama --model qwen3:8b`. Never persist a credential non-interactively or place one in project configuration.
 
 Use `--base-url` only for an explicitly requested compatible endpoint. When the output directory is an existing OKF v0.1 bundle, generation automatically improves it, rebuilds its indexes, removes stale OKF documents, and appends to `log.md`. Do not add `--force` for that normal update path. Use `--force` only after inspecting a non-OKF non-empty output directory and confirming files may be replaced.
 
