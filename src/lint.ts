@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
+import { resolveMarkdownLinkTarget } from "./link-target.js";
 import { validateBundle, type ValidationIssue } from "./validate.js";
 
 export interface LintIssue extends ValidationIssue {
@@ -104,17 +105,8 @@ async function readConcept(root: string, absolute: string): Promise<ConceptDocum
 }
 
 function resolveLink(from: string, rawTarget: string): string | undefined {
-  if (/^(?:[a-z][a-z\d+.-]*:|#)/i.test(rawTarget)) return undefined;
-  let target: string;
-  try {
-    target = decodeURIComponent(rawTarget.split("#")[0] ?? "");
-  } catch {
-    return undefined;
-  }
-  if (!target.endsWith(".md")) return undefined;
-  return target.startsWith("/")
-    ? path.posix.normalize(target.slice(1))
-    : path.posix.normalize(path.posix.join(path.posix.dirname(from), target));
+  const target = resolveMarkdownLinkTarget(from, rawTarget);
+  return target.kind === "resolved" && target.hasMarkdownPath ? target.path : undefined;
 }
 
 async function findConceptFiles(directory: string): Promise<string[]> {

@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
 import { parse as parseYaml } from "yaml";
+import { resolveMarkdownLinkTarget } from "./link-target.js";
 
 export interface ValidationIssue {
   severity: "error" | "warning";
@@ -21,16 +22,19 @@ export async function validateBundle(directory: string): Promise<ValidationResul
   const fileSet = new Set(files.map((file) => toPosix(path.relative(root, file))));
   const issues: ValidationIssue[] = [];
   const anchorsByFile = new Map<string, Set<string>>();
+  const contentByFile = new Map<string, string>();
 
   for (const file of files) {
     const relative = toPosix(path.relative(root, file));
-    anchorsByFile.set(relative, headingAnchors(await readFile(file, "utf8")));
+    const content = await readFile(file, "utf8");
+    contentByFile.set(relative, content);
+    anchorsByFile.set(relative, headingAnchors(content));
   }
 
   for (const file of files) {
     const relative = toPosix(path.relative(root, file));
     const name = path.basename(file);
-    const content = await readFile(file, "utf8");
+    const content = contentByFile.get(relative)!;
     if (name === "index.md") validateIndex(relative, content, issues);
     else if (name === "log.md") validateLog(relative, content, issues);
     else validateConcept(relative, content, issues);
@@ -97,7 +101,7 @@ function validateLog(file: string, content: string, issues: ValidationIssue[]): 
       issues.push({ severity: "error", file, message: `Log date heading must use YYYY-MM-DD: ${date}` });
     }
   }
-  const validDates = dateHeadings.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
+  const validDates = dateHeadings.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)));
   for (let index = 1; index < validDates.length; index += 1) {
     if (validDates[index]! > validDates[index - 1]!) {
       issues.push({ severity: "error", file, message: "Log date groups must be ordered newest first." });
@@ -109,21 +113,16 @@ function validateLog(file: string, content: string, issues: ValidationIssue[]): 
 function validateLinks(file: string, content: string, files: Set<string>, anchorsByFile: Map<string, Set<string>>, issues: ValidationIssue[]): void {
   for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
     const rawTarget = match[1]?.trim();
-    if (!rawTarget || /^(?:[a-z][a-z\d+.-]*:)/i.test(rawTarget)) continue;
-    let decoded: string;
-    try { decoded = decodeURIComponent(rawTarget); } catch {
+    if (!rawTarget) continue;
+    const resolved = resolveMarkdownLinkTarget(file, rawTarget);
+    if (resolved.kind === "invalid") {
       issues.push({ severity: "warning", file, message: `Link target is not valid URL encoding: ${rawTarget}` });
       continue;
     }
-    const [rawPath = "", fragment] = decoded.split("#", 2);
-    const cleanTarget = rawPath;
-    if (cleanTarget.endsWith("/")) continue;
-    const target = !cleanTarget ? file : cleanTarget.startsWith("/")
-      ? path.posix.normalize(cleanTarget.slice(1))
-      : path.posix.normalize(path.posix.join(path.posix.dirname(file), cleanTarget));
-    if (target.endsWith(".md") && !files.has(target)) {
+    if (resolved.kind === "ignored") continue;
+    if (resolved.hasMarkdownPath && !files.has(resolved.path)) {
       issues.push({ severity: "warning", file, message: `Broken concept link: ${rawTarget}` });
-    } else if (fragment && target.endsWith(".md") && !anchorsByFile.get(target)?.has(slugify(fragment))) {
+    } else if (resolved.fragment && !anchorsByFile.get(resolved.path)?.has(slugify(resolved.fragment))) {
       issues.push({ severity: "warning", file, message: `Broken heading anchor: ${rawTarget}` });
     }
   }

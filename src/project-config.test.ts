@@ -44,4 +44,14 @@ describe("project configuration", () => {
     await expect(createProjectConfig(file)).rejects.toThrow("already exists");
     expect(await readFile(file, "utf8")).toBe("custom: true\n");
   });
+
+  it("overwrites an existing configuration with force", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-project-"));
+    const file = path.join(root, "okfgen.config.yml");
+    await writeFile(file, "custom: true\n", "utf8");
+    await createProjectConfig(file, true);
+    const content = await readFile(file, "utf8");
+    expect(content).toContain("provider: nebius");
+    expect(content).not.toContain("custom: true");
+  });
 });
