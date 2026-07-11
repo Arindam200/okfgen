@@ -15,7 +15,7 @@ import {
   saveOkfgenEnv,
   setSessionConfig,
 } from "./config.js";
-import { friendlyError, PromptCancelledError, registerDiagnosticSecret } from "./diagnostics.js";
+import { friendlyError, PromptCancelledError, registerDiagnosticSecret, unwrapPrompt } from "./diagnostics.js";
 import { providerNames, providers, type ProviderName } from "./providers.js";
 
 let shellActive = false;
@@ -295,14 +295,6 @@ async function resetPreferences(): Promise<void> {
 function sourceLabel(source: string, envKey?: string): string {
   if (source === "unset" || source === "default") return pc.dim(`(${source})`);
   return pc.dim(`(${source}${envKey ? `: ${envKey}` : ""})`);
-}
-
-function unwrapPrompt<T>(value: T | symbol): T {
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled");
-    throw new PromptCancelledError();
-  }
-  return value as T;
 }
 
 function printCommandHelp(): void {

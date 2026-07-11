@@ -14,7 +14,7 @@ import {
   resolveRetryAttempts,
   saveOkfgenEnv,
 } from "./config.js";
-import { friendlyError, PromptCancelledError, registerDiagnosticSecret } from "./diagnostics.js";
+import { friendlyError, PromptCancelledError, registerDiagnosticSecret, unwrapPrompt as unwrap } from "./diagnostics.js";
 import { isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, startInteractiveShell } from "./interactive.js";
 import { fetchNebiusModels, formatModelLabel, providerNames, providers, resolveApiKey, type ProviderName } from "./providers.js";
 import { validateBundle } from "./validate.js";
@@ -366,12 +366,4 @@ function parsePort(value: string): number {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error(`Invalid port: ${value}`);
   return port;
-}
-
-function unwrap<T>(value: T | symbol): T {
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled");
-    throw new PromptCancelledError();
-  }
-  return value as T;
 }
