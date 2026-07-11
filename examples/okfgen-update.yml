@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install --global okfgen
+      - run: npm install --global okfgen@0.0.3
       - name: Refresh knowledge
         run: okfgen update "Refresh this repository knowledge" --source ./src ./README.md --output ./knowledge
       - name: Validate bundle

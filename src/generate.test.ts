@@ -29,6 +29,7 @@ describe("bundle generation", () => {
     expect(progress.mock.calls.map(([event]) => event.stage)).toEqual(["inspect", "sources", "model", "write", "validate"]);
     const messages = invoke.mock.calls[0]?.[0] as Array<{ content: string }> | undefined;
     expect(messages?.[1]?.content).toContain("Existing guidance");
+    expect(messages?.[1]?.content).not.toContain("Directory Update Log");
     await expect(readFile(path.join(root, "guide.md"), "utf8")).resolves.toContain("Improved guidance");
     await expect(readFile(path.join(root, "log.md"), "utf8")).resolves.toContain("**Update**: Improved 1 existing concept");
   });

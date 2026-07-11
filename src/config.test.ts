@@ -47,6 +47,20 @@ describe("OKFgen environment configuration", () => {
     expect(resolveConfigValue("OKFGEN_MODEL", undefined, environment).source).toBe("saved");
   });
 
+  it("resets environment provenance between repeated loads", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-config-"));
+    const firstFile = path.join(root, "first.env");
+    const secondFile = path.join(root, "second.env");
+    await saveOkfgenEnv({ OKFGEN_MODEL: "first-saved" }, firstFile, {});
+    await loadOkfgenEnv(firstFile, { OKFGEN_MODEL: "terminal-model" });
+    expect(resolveConfigValue("OKFGEN_MODEL", undefined, { OKFGEN_MODEL: "terminal-model" }).source).toBe("terminal over saved");
+
+    const secondEnvironment: NodeJS.ProcessEnv = {};
+    await saveOkfgenEnv({ OKFGEN_MODEL: "second-saved" }, secondFile, {});
+    await loadOkfgenEnv(secondFile, secondEnvironment);
+    expect(resolveConfigValue("OKFGEN_MODEL", undefined, secondEnvironment).source).toBe("saved");
+  });
+
   it("does not erase an inherited terminal value when saved preferences are reset", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-config-"));
     const file = path.join(root, ".env");

@@ -32,6 +32,8 @@ const inheritedValues = new Map<string, string>();
 const sessionKeys = new Set<string>();
 
 export async function loadOkfgenEnv(filePath = okfgenEnvPath, environment = process.env): Promise<EnvMap> {
+  inheritedKeys.clear();
+  inheritedValues.clear();
   savedEnv = await readEnvFile(filePath);
   for (const [key, value] of Object.entries(savedEnv)) {
     if (environment[key] === undefined) environment[key] = value;
