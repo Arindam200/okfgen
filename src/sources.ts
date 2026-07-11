@@ -71,8 +71,14 @@ async function findSourceFiles(directory: string, filter?: SourceOptions["filter
   for (const entry of entries) {
     if (entry.name.startsWith(".") || ignoredDirectories.has(entry.name)) continue;
     const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await findSourceFiles(absolute, filter));
-    else if (entry.isFile() && supportedExtensions.has(path.extname(entry.name).toLowerCase()) && filter?.(absolute) !== false) files.push(absolute);
+    if (entry.isDirectory()) {
+      files.push(...await findSourceFiles(absolute, filter));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!supportedExtensions.has(path.extname(entry.name).toLowerCase())) continue;
+    if (filter?.(absolute) === false) continue;
+    files.push(absolute);
   }
   return files.sort();
 }
