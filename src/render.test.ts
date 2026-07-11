@@ -31,14 +31,12 @@ describe("OKF bundle rendering", () => {
 
     const log = await readFile(path.join(root, "log.md"), "utf8");
     expect(log).toContain("## 2026-07-10");
-    expect(log).toContain("**Time**: 2026-07-10T10:00:00.000Z");
-    expect(log).toContain("**Creation**: Generated 2 concepts");
+    expect(log).toContain("**Creation**: At 2026-07-10T10:00:00.000Z, added [keep.md](/keep.md).");
     expect(log).toContain("## 2026-07-11");
-    expect(log).toContain("**Time**: 2026-07-11T10:00:00.000Z");
-    expect(log).toContain("**Update**: Changed 1, added 1, and removed 1 concepts");
-    expect(log).toContain("**Changed `keep.md`**: body.");
-    expect(log).toContain("**Added `new/added.md`**");
-    expect(log).toContain("**Removed `retired/old.md`**");
+    expect(log.indexOf("## 2026-07-11")).toBeLessThan(log.indexOf("## 2026-07-10"));
+    expect(log).toContain("**Update**: At 2026-07-11T10:00:00.000Z, changed [keep.md](/keep.md) (body).");
+    expect(log).toContain("**Creation**: At 2026-07-11T10:00:00.000Z, added [new/added.md](/new/added.md).");
+    expect(log).toContain("**Deprecation**: At 2026-07-11T10:00:00.000Z, removed [retired/old.md](/retired/old.md).");
   });
 
   it("still protects non-OKF non-empty directories", async () => {
@@ -48,6 +46,18 @@ describe("OKF bundle rendering", () => {
 
     await expect(renderBundle(plan([concept("new.md", "New content")]), root))
       .rejects.toThrow("is not an OKF v0.1 bundle");
+  });
+
+  it("preserves an unchanged concept and its last meaningful timestamp", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "okfgen-render-"));
+    const unchangedPlan = plan([concept("stable.md", "Stable content")]);
+    await renderBundle(unchangedPlan, root, { now: new Date("2026-07-10T10:00:00Z") });
+    const before = await readFile(path.join(root, "stable.md"), "utf8");
+
+    await renderBundle(unchangedPlan, root, { now: new Date("2026-07-11T10:00:00Z") });
+
+    await expect(readFile(path.join(root, "stable.md"), "utf8")).resolves.toBe(before);
+    await expect(readFile(path.join(root, "log.md"), "utf8")).resolves.toContain("no concept content changed");
   });
 });
 

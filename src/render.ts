@@ -32,8 +32,12 @@ export async function renderBundle(
 
   for (const concept of plan.concepts) {
     const destination = safeDestination(root, concept.path);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, renderConcept(concept, now), "utf8");
+    const existingContent = existingBundle?.conceptContents[concept.path];
+    const unchanged = existingContent !== undefined && changedConceptFields(existingContent, concept).length === 0;
+    if (!unchanged) {
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, renderConcept(concept, now), "utf8");
+    }
     files.push(concept.path);
   }
 
@@ -152,8 +156,8 @@ function renderLog(plan: BundlePlan, now: Date, existingBundle: ExistingBundle |
   const date = now.toISOString().slice(0, 10);
   const timestamp = now.toISOString();
   if (!existingBundle) {
-    const created = plan.concepts.map((concept) => `* **Added \`${concept.path}\`**`).join("\n");
-    return `# Directory Update Log\n\n## ${date}\n\n* **Time**: ${timestamp}\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKFgen.\n${created}\n`;
+    const created = plan.concepts.map((concept) => `* **Creation**: At ${timestamp}, added ${conceptLink(concept.path)}.`).join("\n");
+    return `# Directory Update Log\n\n## ${date}\n${created}\n`;
   }
 
   const previousPaths = new Set(existingBundle.conceptPaths);
@@ -165,14 +169,28 @@ function renderLog(plan: BundlePlan, now: Date, existingBundle: ExistingBundle |
   });
   const added = [...nextPaths].filter((conceptPath) => !previousPaths.has(conceptPath));
   const removed = [...previousPaths].filter((conceptPath) => !nextPaths.has(conceptPath));
-  const history = existingBundle.log?.trimEnd() || "# Directory Update Log";
-  const details = [
-    ...changed.map((change) => `* **Changed \`${change.path}\`**: ${change.fields.join(", ")}.`),
-    ...added.map((conceptPath) => `* **Added \`${conceptPath}\`**`),
-    ...removed.map((conceptPath) => `* **Removed \`${conceptPath}\`**`),
+  const entries = [
+    ...changed.map((change) => `* **Update**: At ${timestamp}, changed ${conceptLink(change.path)} (${change.fields.join(", ")}).`),
+    ...added.map((conceptPath) => `* **Creation**: At ${timestamp}, added ${conceptLink(conceptPath)}.`),
+    ...removed.map((conceptPath) => `* **Deprecation**: At ${timestamp}, removed ${conceptLink(conceptPath)}.`),
   ];
-  if (details.length === 0) details.push("* **Documents**: No concept content changed.");
-  return `${history}\n\n## ${date}\n\n* **Time**: ${timestamp}\n* **Update**: Changed ${changed.length}, added ${added.length}, and removed ${removed.length} concepts with OKFgen.\n${details.join("\n")}\n`;
+  if (entries.length === 0) entries.push(`* **Update**: At ${timestamp}, no concept content changed.`);
+  return prependLogEntries(existingBundle.log, date, entries);
+}
+
+function prependLogEntries(existingLog: string | undefined, date: string, entries: string[]): string {
+  const history = existingLog?.trim() || "# Directory Update Log";
+  const heading = `## ${date}`;
+  const rootHeading = "# Directory Update Log";
+  const body = history.startsWith(rootHeading) ? history.slice(rootHeading.length).trim() : history;
+  if (body.startsWith(heading)) {
+    return `${rootHeading}\n\n${heading}\n${entries.join("\n")}\n${body.slice(heading.length).trimStart()}\n`;
+  }
+  return `${rootHeading}\n\n${heading}\n${entries.join("\n")}\n\n${body}\n`;
+}
+
+function conceptLink(conceptPath: string): string {
+  return `[${conceptPath}](/${conceptPath.split("/").map(encodeURIComponent).join("/")})`;
 }
 
 function changedConceptFields(existingContent: string | undefined, concept: Concept): string[] {
