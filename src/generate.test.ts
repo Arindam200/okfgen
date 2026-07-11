@@ -31,7 +31,7 @@ describe("bundle generation", () => {
     expect(messages?.[1]?.content).toContain("Existing guidance");
     expect(messages?.[1]?.content).not.toContain("Directory Update Log");
     await expect(readFile(path.join(root, "guide.md"), "utf8")).resolves.toContain("Improved guidance");
-    await expect(readFile(path.join(root, "log.md"), "utf8")).resolves.toContain("**Update**: Improved 1 existing concept");
+    await expect(readFile(path.join(root, "log.md"), "utf8")).resolves.toContain("**Changed `guide.md`**: body.");
   });
 
   it("reports and repairs an invalid first model response", async () => {

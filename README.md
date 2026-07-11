@@ -143,8 +143,6 @@ Options:
 Without a TTY, `generate` prints a compact JSON summary, making it suitable for CI.
 Use `--print` to force this one-shot behavior even when a terminal is attached.
 
-A scheduled GitHub Actions template is available at [`examples/okfgen-update.yml`](./examples/okfgen-update.yml). Copy it into `.github/workflows/`, adjust the source and output paths, and add the selected provider credential as a repository secret.
-
 ### Update an existing bundle
 
 Run the same generation command with an existing OKF v0.1 bundle as the output directory:
@@ -155,7 +153,7 @@ okfgen generate "Refresh this knowledge from the latest source material" \
   --output ./payments-okfgen
 ```
 
-OKFgen automatically supplies the current bundle to the model as context and asks for a complete improved plan. It updates retained concepts, adds new concepts, removes stale OKF Markdown files, rebuilds indexes, and appends a dated summary to the existing `log.md`. Unrelated non-Markdown files are left untouched. `--force` is not required for recognized OKF bundles.
+OKFgen automatically supplies the current bundle to the model as context and asks for a complete improved plan. It updates changed concepts, adds new concepts, removes stale OKF Markdown files, rebuilds indexes, and appends a timestamped, per-document change summary to the existing `log.md`. Unrelated non-Markdown files are left untouched. `--force` is not required for recognized OKF bundles. Updates happen only when you run this command; OKFgen does not install or require a scheduled job.
 
 ### Validate a bundle
 

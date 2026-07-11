@@ -31,9 +31,14 @@ describe("OKF bundle rendering", () => {
 
     const log = await readFile(path.join(root, "log.md"), "utf8");
     expect(log).toContain("## 2026-07-10");
+    expect(log).toContain("**Time**: 2026-07-10T10:00:00.000Z");
     expect(log).toContain("**Creation**: Generated 2 concepts");
     expect(log).toContain("## 2026-07-11");
-    expect(log).toContain("**Update**: Improved 1 existing concept, added 1, and removed 1");
+    expect(log).toContain("**Time**: 2026-07-11T10:00:00.000Z");
+    expect(log).toContain("**Update**: Changed 1, added 1, and removed 1 concepts");
+    expect(log).toContain("**Changed `keep.md`**: body.");
+    expect(log).toContain("**Added `new/added.md`**");
+    expect(log).toContain("**Removed `retired/old.md`**");
   });
 
   it("still protects non-OKF non-empty directories", async () => {
