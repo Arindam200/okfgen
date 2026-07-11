@@ -1,4 +1,20 @@
+import * as p from "@clack/prompts";
 import { providerNames, providers } from "./providers.js";
+
+export class PromptCancelledError extends Error {
+  constructor() {
+    super("Operation cancelled");
+    this.name = "PromptCancelledError";
+  }
+}
+
+export function unwrapPrompt<T>(value: T | symbol): T {
+  if (p.isCancel(value)) {
+    p.cancel("Operation cancelled");
+    throw new PromptCancelledError();
+  }
+  return value as T;
+}
 
 const runtimeSecrets = new Map<string, string>();
 

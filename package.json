@@ -36,13 +36,12 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --outDir dist",
+    "build": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsup && tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --outDir dist",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run build",
-    "prepack": "npm run check",
     "prepublishOnly": "npm run check"
   },
   "keywords": [
