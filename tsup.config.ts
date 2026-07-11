@@ -1,14 +1,26 @@
-import { defineConfig } from "tsup";
+import { defineConfig, type Options } from "tsup";
 
-export default defineConfig({
-  entry: ["src/cli.ts", "src/index.ts"],
+// TypeScript emits declarations separately; tsup's rollup declaration plugin
+// is not compatible with the TypeScript version used by this package.
+const shared: Options = {
   format: ["esm"],
-  // TypeScript emits declarations separately; tsup's rollup declaration plugin
-  // is not compatible with the TypeScript version used by this package.
   dts: false,
   sourcemap: true,
-  clean: true,
-  banner: {
-    js: "#!/usr/bin/env node",
+};
+
+// The shebang banner belongs only on the executable entry, so the CLI and the
+// library are built as separate configs. Both configs build concurrently, so
+// neither may clean the output folder; the build script clears dist first.
+export default defineConfig([
+  {
+    ...shared,
+    entry: ["src/cli.ts"],
+    banner: {
+      js: "#!/usr/bin/env node",
+    },
   },
-});
+  {
+    ...shared,
+    entry: ["src/index.ts"],
+  },
+]);

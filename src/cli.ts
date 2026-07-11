@@ -1,7 +1,7 @@
 import * as p from "@clack/prompts";
 import boxen from "boxen";
 import pc from "picocolors";
-import { Command, Option } from "commander";
+import { Command, CommanderError, Option } from "commander";
 import path from "node:path";
 import { inspectExistingBundle } from "./existing-bundle.js";
 import { generateBundle } from "./generate.js";
@@ -15,12 +15,13 @@ import {
   resolveRetryAttempts,
   saveOkfgenEnv,
 } from "./config.js";
-import { friendlyError, registerDiagnosticSecret } from "./diagnostics.js";
+import { friendlyError, PromptCancelledError, registerDiagnosticSecret, unwrapPrompt as unwrap } from "./diagnostics.js";
 import { isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, startInteractiveShell } from "./interactive.js";
 import { lintBundle } from "./lint.js";
 import { fetchNebiusModels, formatModelLabel, providerNames, providers, resolveApiKey, type ProviderName } from "./providers.js";
 import { createProjectConfig, DEFAULT_PROJECT_CONFIG, loadProjectConfig } from "./project-config.js";
 import { validateBundle } from "./validate.js";
+import { VERSION } from "./version.js";
 import { startViewer } from "./viewer.js";
 
 interface GenerateFlags {
@@ -38,12 +39,11 @@ interface GenerateFlags {
   print?: boolean;
 }
 
-const VERSION = "0.0.3";
-
 const program = new Command()
   .name("okfgen")
   .description("Generate and validate Open Knowledge Format bundles with your preferred LLM")
   .version(VERSION)
+  .exitOverride()
   .showHelpAfterError()
   .configureHelp({ sortOptions: true, sortSubcommands: true });
 
@@ -176,8 +176,9 @@ program
 
     const spin = interactive ? p.spinner() : undefined;
     spin?.start(existingBundle ? "Improving existing knowledge bundle" : "Generating knowledge bundle");
+    let result;
     try {
-      const result = await generateBundle({
+      result = await generateBundle({
         request: generationRequest,
         provider,
         model,
@@ -193,40 +194,47 @@ program
         onProgress: (event) => spin?.message(event.message),
       });
       spin?.stop(`${result.mode === "updated" ? "Updated" : "Generated"} ${result.plan.concepts.length} concepts`);
-      if (interactive) rememberGeneration(outputDirectory, sources);
-      const viewer = shouldView
-        ? await startViewer({ directory: outputDirectory, port: parsePort(flags.viewPort), openBrowser: true })
-        : undefined;
-      const warnings = result.validation.issues.filter((issue) => issue.severity === "warning");
-      if (interactive) {
-        for (const warning of warnings.slice(0, 3)) p.log.warn(`${warning.file}: ${warning.message}`);
-        if (warnings.length > 3) p.log.warn(`${warnings.length - 3} more warnings · run okfgen validate ${outputDirectory} for details`);
-        p.note(
-          [
-            `Provider  ${providers[provider].label}`,
-            `Model     ${model}`,
-            `Files     ${result.files.length}`,
-            `Warnings  ${warnings.length}`,
-            `Output    ${path.resolve(outputDirectory)}`,
-            ...(viewer ? [`Viewer    ${viewer.url}`] : []),
-          ].join("\n"),
-          result.mode === "updated" ? "Bundle updated" : "Bundle ready",
-        );
-        p.outro(viewer
-          ? `Explorer running at ${viewer.url} · press Ctrl+C to stop`
-          : `Validation passed · next: okfgen view ${outputDirectory}`);
-      } else {
-        process.stdout.write(`${JSON.stringify({
-          output: path.resolve(outputDirectory),
-          mode: result.mode,
-          concepts: result.plan.concepts.length,
-          files: result.files.length,
-          warnings: warnings.length,
-        })}\n`);
-      }
     } catch (error) {
       spin?.stop("Generation stopped before completion");
       throw error;
+    }
+    if (interactive) rememberGeneration(outputDirectory, sources);
+    let viewer;
+    if (shouldView) {
+      try {
+        viewer = await startViewer({ directory: outputDirectory, port: parsePort(flags.viewPort), openBrowser: true });
+      } catch (error) {
+        const warning = `The bundle is ready, but the viewer could not start: ${friendlyError(error)}`;
+        if (interactive) p.log.warn(warning);
+        else process.stderr.write(`${warning}\n`);
+      }
+    }
+    const warnings = result.validation.issues.filter((issue) => issue.severity === "warning");
+    if (interactive) {
+      for (const warning of warnings.slice(0, 3)) p.log.warn(`${warning.file}: ${warning.message}`);
+      if (warnings.length > 3) p.log.warn(`${warnings.length - 3} more warnings · run okfgen validate ${outputDirectory} for details`);
+      p.note(
+        [
+          `Provider  ${providers[provider].label}`,
+          `Model     ${model}`,
+          `Files     ${result.files.length}`,
+          `Warnings  ${warnings.length}`,
+          `Output    ${path.resolve(outputDirectory)}`,
+          ...(viewer ? [`Viewer    ${viewer.url}`] : []),
+        ].join("\n"),
+        result.mode === "updated" ? "Bundle updated" : "Bundle ready",
+      );
+      p.outro(viewer
+        ? `Explorer running at ${viewer.url} · press Ctrl+C to stop`
+        : `Validation passed · next: okfgen view ${outputDirectory}`);
+    } else {
+      process.stdout.write(`${JSON.stringify({
+        output: path.resolve(outputDirectory),
+        mode: result.mode,
+        concepts: result.plan.concepts.length,
+        files: result.files.length,
+        warnings: warnings.length,
+      })}\n`);
     }
   });
 
@@ -322,6 +330,11 @@ const run = loadOkfgenEnv().then(async () => {
 });
 
 run.catch((error: unknown) => {
+  if (error instanceof CommanderError) {
+    process.exitCode = error.exitCode;
+    return;
+  }
+  if (error instanceof PromptCancelledError) return;
   const message = friendlyError(error);
   p.log.error(message);
   process.exitCode = 1;
@@ -401,16 +414,7 @@ function parsePort(value: string): number {
   if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error(`Invalid port: ${value}`);
   return port;
 }
-
 function resolveProjectPath(value: string, configDirectory: string): string {
   if (/^https?:\/\//i.test(value) || path.isAbsolute(value)) return value;
   return path.resolve(configDirectory, value);
-}
-
-function unwrap<T>(value: T | symbol): T {
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled");
-    process.exit(0);
-  }
-  return value as T;
 }
