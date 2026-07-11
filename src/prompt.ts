@@ -1,6 +1,10 @@
 import type { BaseMessageLike } from "@langchain/core/messages";
 
-export function buildGenerationMessages(request: string, sourceContext: string): BaseMessageLike[] {
+export function buildGenerationMessages(
+  request: string,
+  sourceContext: string,
+  existingBundleContext = "",
+): BaseMessageLike[] {
   return [
     {
       role: "system",
@@ -33,11 +37,14 @@ Requirements:
 - Use # Schema, # Examples, and # Citations when applicable.
 - Cross-link related concepts with bundle-absolute links such as /group/concept.md.
 - Do not invent citations or factual claims. Preserve uncertainty and only cite sources present in the input.
-- Do not put YAML frontmatter in body; it is rendered deterministically later.`,
+- Do not put YAML frontmatter in body; it is rendered deterministically later.
+- When an existing OKF bundle is supplied, return the complete improved replacement plan, not a patch or partial list.
+- Preserve accurate existing knowledge, paths, metadata, and cross-links unless the request or newer source material justifies changing them.
+- Consolidate duplication, correct stale material, and remove concepts only when they are obsolete or no longer useful.`,
     },
     {
       role: "user",
-      content: `Generation request:\n${request}\n\nSource material:\n${sourceContext || "No additional source material was supplied."}`,
+      content: `Generation request:\n${request}\n\nSource material:\n${sourceContext || "No additional source material was supplied."}\n\nExisting OKF bundle to improve:\n${existingBundleContext || "No existing OKF bundle was found. Create a new bundle."}`,
     },
   ];
 }

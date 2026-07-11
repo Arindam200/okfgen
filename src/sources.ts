@@ -10,6 +10,7 @@ const ignoredDirectories = new Set([".git", "node_modules", "dist", "build", "co
 export interface SourceOptions {
   maxBytes?: number;
   fetchImpl?: typeof fetch;
+  filter?: (absolutePath: string) => boolean;
 }
 
 export async function loadSources(inputs: string[], options: SourceOptions = {}): Promise<string> {
@@ -36,9 +37,9 @@ export async function loadSources(inputs: string[], options: SourceOptions = {})
     const absolute = path.resolve(input);
     const sourceStat = await stat(absolute);
     if (sourceStat.isFile()) {
-      append(input, await readFile(absolute, "utf8"));
+      if (options.filter?.(absolute) !== false) append(input, await readFile(absolute, "utf8"));
     } else if (sourceStat.isDirectory()) {
-      for (const file of await findSourceFiles(absolute)) {
+      for (const file of await findSourceFiles(absolute, options.filter)) {
         append(path.relative(process.cwd(), file), await readFile(file, "utf8"));
       }
     } else {
@@ -64,14 +65,20 @@ async function fetchSource(url: string, fetchImpl: typeof fetch, remainingBytes:
   return content;
 }
 
-async function findSourceFiles(directory: string): Promise<string[]> {
+async function findSourceFiles(directory: string, filter?: SourceOptions["filter"]): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files: string[] = [];
   for (const entry of entries) {
     if (entry.name.startsWith(".") || ignoredDirectories.has(entry.name)) continue;
     const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await findSourceFiles(absolute));
-    else if (entry.isFile() && supportedExtensions.has(path.extname(entry.name).toLowerCase())) files.push(absolute);
+    if (entry.isDirectory()) {
+      files.push(...await findSourceFiles(absolute, filter));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!supportedExtensions.has(path.extname(entry.name).toLowerCase())) continue;
+    if (filter?.(absolute) === false) continue;
+    files.push(absolute);
   }
   return files.sort();
 }

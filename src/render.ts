@@ -1,6 +1,9 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rmdir, unlink, writeFile } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
+import matter from "gray-matter";
 import { stringify } from "yaml";
+import { inspectExistingBundle, type ExistingBundle } from "./existing-bundle.js";
 import type { BundlePlan, Concept } from "./schema.js";
 
 export interface RenderOptions {
@@ -10,6 +13,7 @@ export interface RenderOptions {
 }
 
 export interface RenderResult {
+  mode: "created" | "updated";
   files: string[];
 }
 
@@ -19,7 +23,8 @@ export async function renderBundle(
   options: RenderOptions = {},
 ): Promise<RenderResult> {
   const root = path.resolve(outputDirectory);
-  await assertWritableDestination(root, options.force ?? false);
+  const existingBundle = await inspectExistingBundle(root);
+  await assertWritableDestination(root, options.force ?? false, Boolean(existingBundle));
   await mkdir(root, { recursive: true });
 
   const now = options.now ?? new Date();
@@ -27,8 +32,12 @@ export async function renderBundle(
 
   for (const concept of plan.concepts) {
     const destination = safeDestination(root, concept.path);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, renderConcept(concept, now), "utf8");
+    const existingContent = existingBundle?.conceptContents[concept.path];
+    const unchanged = existingContent !== undefined && changedConceptFields(existingContent, concept).length === 0;
+    if (!unchanged) {
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, renderConcept(concept, now), "utf8");
+    }
     files.push(concept.path);
   }
 
@@ -39,13 +48,17 @@ export async function renderBundle(
     files.push(relativePath);
   }
 
+  if (existingBundle) {
+    await removeStaleGeneratedFiles(root, existingBundle, new Set(files));
+  }
+
   if (options.includeLog !== false) {
-    const log = `# Directory Update Log\n\n## ${now.toISOString().slice(0, 10)}\n\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKFgen.\n`;
+    const log = renderLog(plan, now, existingBundle);
     await writeFile(path.join(root, "log.md"), log, "utf8");
     files.push("log.md");
   }
 
-  return { files: files.sort() };
+  return { mode: existingBundle ? "updated" : "created", files: files.sort() };
 }
 
 export function renderConcept(concept: Concept, now = new Date()): string {
@@ -126,14 +139,98 @@ function safeDestination(root: string, relativePath: string): string {
   return destination;
 }
 
-async function assertWritableDestination(root: string, force: boolean): Promise<void> {
+async function assertWritableDestination(root: string, force: boolean, updating: boolean): Promise<void> {
+  let entries: string[];
   try {
-    const entries = await readdir(root);
-    if (entries.length > 0 && !force) {
-      throw new Error(`Output directory is not empty: ${root}. Use --force to add or replace generated files.`);
-    }
+    entries = await readdir(root);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (entries.length > 0 && !force && !updating) {
+    throw new Error(`Output directory is not empty and is not an OKF v0.1 bundle: ${root}. Use --force to add or replace generated files.`);
+  }
+}
+
+function renderLog(plan: BundlePlan, now: Date, existingBundle: ExistingBundle | undefined): string {
+  const date = now.toISOString().slice(0, 10);
+  const timestamp = now.toISOString();
+  if (!existingBundle) {
+    const created = plan.concepts.map((concept) => `* **Creation**: At ${timestamp}, added ${conceptLink(concept.path)}.`).join("\n");
+    return `# Directory Update Log\n\n## ${date}\n${created}\n`;
+  }
+
+  const previousPaths = new Set(existingBundle.conceptPaths);
+  const nextPaths = new Set(plan.concepts.map((concept) => concept.path));
+  const changed = plan.concepts.flatMap((concept) => {
+    if (!previousPaths.has(concept.path)) return [];
+    const fields = changedConceptFields(existingBundle.conceptContents[concept.path], concept);
+    return fields.length > 0 ? [{ path: concept.path, fields }] : [];
+  });
+  const added = [...nextPaths].filter((conceptPath) => !previousPaths.has(conceptPath));
+  const removed = [...previousPaths].filter((conceptPath) => !nextPaths.has(conceptPath));
+  const entries = [
+    ...changed.map((change) => `* **Update**: At ${timestamp}, changed ${conceptLink(change.path)} (${change.fields.join(", ")}).`),
+    ...added.map((conceptPath) => `* **Creation**: At ${timestamp}, added ${conceptLink(conceptPath)}.`),
+    ...removed.map((conceptPath) => `* **Deprecation**: At ${timestamp}, removed ${conceptLink(conceptPath)}.`),
+  ];
+  if (entries.length === 0) entries.push(`* **Update**: At ${timestamp}, no concept content changed.`);
+  return prependLogEntries(existingBundle.log, date, entries);
+}
+
+function prependLogEntries(existingLog: string | undefined, date: string, entries: string[]): string {
+  const history = existingLog?.trim() || "# Directory Update Log";
+  const heading = `## ${date}`;
+  const rootHeading = "# Directory Update Log";
+  const body = history.startsWith(rootHeading) ? history.slice(rootHeading.length).trim() : history;
+  if (body.startsWith(heading)) {
+    return `${rootHeading}\n\n${heading}\n${entries.join("\n")}\n${body.slice(heading.length).trimStart()}\n`;
+  }
+  return `${rootHeading}\n\n${heading}\n${entries.join("\n")}\n\n${body}\n`;
+}
+
+function conceptLink(conceptPath: string): string {
+  return `[${conceptPath}](/${conceptPath.split("/").map(encodeURIComponent).join("/")})`;
+}
+
+function changedConceptFields(existingContent: string | undefined, concept: Concept): string[] {
+  if (!existingContent) return ["content"];
+  const existing = matter(existingContent);
+  const fields: string[] = [];
+  if (existing.data.type !== concept.type) fields.push("type");
+  if (existing.data.title !== concept.title) fields.push("title");
+  if (existing.data.description !== concept.description) fields.push("description");
+  if ((existing.data.resource ?? undefined) !== (concept.resource ?? undefined)) fields.push("resource");
+  if (!isDeepStrictEqual(existing.data.tags ?? [], concept.tags)) fields.push("tags");
+  if (existing.content.trim() !== concept.body.trim()) fields.push("body");
+  const existingMetadata = removeReservedMetadata(existing.data);
+  delete existingMetadata.timestamp;
+  if (!isDeepStrictEqual(existingMetadata, concept.metadata ?? {})) fields.push("metadata");
+  return fields;
+}
+
+async function removeStaleGeneratedFiles(
+  root: string,
+  existingBundle: ExistingBundle,
+  nextGeneratedFiles: Set<string>,
+): Promise<void> {
+  const staleFiles = existingBundle.markdownFiles.filter((relativePath) => {
+    return path.posix.basename(relativePath) !== "log.md" && !nextGeneratedFiles.has(relativePath);
+  });
+
+  for (const relativePath of staleFiles) {
+    await unlink(safeDestination(root, relativePath));
+  }
+
+  const directories = [...new Set(staleFiles.map((relativePath) => path.posix.dirname(relativePath)))]
+    .filter((directory) => directory !== ".")
+    .sort((a, b) => b.split("/").length - a.split("/").length);
+  for (const directory of directories) {
+    try {
+      await rmdir(safeDestination(root, directory));
+    } catch (error) {
+      if (!(["ENOENT", "ENOTEMPTY"] as Array<string | undefined>).includes((error as NodeJS.ErrnoException).code)) throw error;
+    }
   }
 }
 

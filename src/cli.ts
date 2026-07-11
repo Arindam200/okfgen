@@ -3,7 +3,19 @@ import boxen from "boxen";
 import pc from "picocolors";
 import { Command, Option } from "commander";
 import path from "node:path";
+import { inspectExistingBundle } from "./existing-bundle.js";
 import { generateBundle } from "./generate.js";
+import {
+  loadOkfgenEnv,
+  OKFGEN_BASE_URL_ENV_KEY,
+  OKFGEN_MODEL_ENV_KEY,
+  resolveConfigValue,
+  resolveProvider,
+  resolveRetryAttempts,
+  saveOkfgenEnv,
+} from "./config.js";
+import { friendlyError, registerDiagnosticSecret } from "./diagnostics.js";
+import { isInteractiveShellActive, rememberGeneration, showFirstRunWordmark, startInteractiveShell } from "./interactive.js";
 import { fetchNebiusModels, formatModelLabel, providerNames, providers, resolveApiKey, type ProviderName } from "./providers.js";
 import { validateBundle } from "./validate.js";
 import { startViewer } from "./viewer.js";
@@ -19,17 +31,21 @@ interface GenerateFlags {
   log: boolean;
   view?: boolean;
   viewPort: string;
+  print?: boolean;
 }
+
+const VERSION = "0.0.3";
 
 const program = new Command()
   .name("okfgen")
   .description("Generate and validate Open Knowledge Format bundles with your preferred LLM")
-  .version("0.1.0")
+  .version(VERSION)
   .showHelpAfterError()
   .configureHelp({ sortOptions: true, sortSubcommands: true });
 
 program
   .command("generate", { isDefault: true })
+  .alias("update")
   .description("Generate an OKF v0.1 knowledge bundle")
   .argument("[request]", "what knowledge the bundle should capture")
   .addOption(new Option("-p, --provider <provider>", "LLM provider").choices([...providerNames]))
@@ -38,13 +54,15 @@ program
   .option("-o, --output <directory>", "bundle output directory", "./okfgen-bundle")
   .option("-s, --source <source...>", "source files, directories, or URLs")
   .option("--base-url <url>", "override the provider base URL")
-  .option("--force", "write into a non-empty output directory")
+  .option("--force", "write into a non-empty directory that is not an existing OKF bundle")
   .option("--no-log", "do not generate log.md")
   .option("--view", "open the generated bundle in the visual explorer")
   .option("--view-port <port>", "visual explorer port", "4173")
+  .option("--print", "run once and print the machine-readable result")
   .action(async (request: string | undefined, flags: GenerateFlags) => {
-    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-    if (interactive) {
+    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && !flags.print);
+    if (interactive && !isInteractiveShellActive()) {
+      await showFirstRunWordmark();
       console.log(boxen(`${pc.bold(pc.cyan("OKFgen"))}\n${pc.dim("Generate portable Open Knowledge Format bundles")}\n\n${pc.dim("Built with love by Arindam · github.com/Arindam200")}`, {
         borderStyle: "round",
         borderColor: "cyan",
@@ -54,10 +72,15 @@ program
       p.log.info(`${pc.dim("Interactive mode")}  ${pc.green("ready")}`);
     }
 
-    const provider = flags.provider
-      ? parseProvider(flags.provider)
+    const providerResolution = resolveProvider(flags.provider);
+    const provider = providerResolution.value
+      ? parseProvider(providerResolution.value)
       : await promptProvider(interactive);
+    if (interactive && providerResolution.value && providerResolution.source !== "flag") {
+      p.log.info(`${providers[provider].label} selected from ${providerResolution.envKey ?? providerResolution.source}`);
+    }
     let apiKey = resolveApiKey(provider, flags.apiKey);
+    if (apiKey) registerDiagnosticSecret(providers[provider].envKey ?? "API_KEY", apiKey);
     if (providers[provider].requiresKey && !apiKey) {
       if (!interactive) {
         throw new Error(`Set ${providers[provider].envKey} before running non-interactively.`);
@@ -67,11 +90,24 @@ program
         mask: "*",
         validate: (value) => String(value ?? "").trim() ? undefined : "An API key is required",
       }));
+      registerDiagnosticSecret(providers[provider].envKey ?? "API_KEY", apiKey);
+      const shouldSaveKey = unwrap(await p.confirm({
+        message: `Save it to ~/.okfgen/.env for future sessions?`,
+        initialValue: false,
+      }));
+      if (shouldSaveKey) {
+        await saveOkfgenEnv({ [providers[provider].envKey!]: apiKey });
+        p.log.success(`Saved ${providers[provider].envKey} with private file permissions`);
+      } else {
+        p.log.info(`${pc.dim("Hint:")} Your key is used for this run only and is never saved.`);
+      }
+    } else if (interactive && providers[provider].requiresKey) {
+      p.log.success(`${providers[provider].envKey} detected · credential value remains hidden`);
     }
 
-    let model = flags.model;
+    let model = resolveConfigValue(OKFGEN_MODEL_ENV_KEY, flags.model).value;
     if (!model) {
-      if (interactive) model = await promptModel(provider, apiKey, flags.baseUrl);
+      if (interactive) model = await promptModel(provider, apiKey, resolveConfigValue(OKFGEN_BASE_URL_ENV_KEY, flags.baseUrl).value);
       else if (provider === "nebius") throw new Error("Choose a Nebius model with --model when running non-interactively.");
       else model = requireDefaultModel(provider);
     }
@@ -89,7 +125,7 @@ program
     if (interactive && sources.length === 0) {
       const sourceInput = unwrap(await p.text({
         message: "Source material (optional)",
-        placeholder: "docs/, schema.sql, https://example.com/reference",
+        placeholder: "docs/, schema.sql, URL — comma-separated",
       }));
       sources = sourceInput.trim() ? sourceInput.split(",").map((value) => value.trim()).filter(Boolean) : [];
     }
@@ -105,12 +141,19 @@ program
     const includeLog = interactive
       ? unwrap(await p.confirm({ message: "Create a generation log.md?", initialValue: flags.log }))
       : flags.log;
+    const existingBundle = await inspectExistingBundle(outputDirectory);
     const shouldView = flags.view ?? (interactive
       ? unwrap(await p.confirm({ message: "Open the visual explorer after generation?", initialValue: true }))
       : false);
 
     if (interactive) {
+      if (existingBundle) {
+        p.log.info(`Existing OKF bundle found · ${existingBundle.conceptPaths.length} concepts will be improved and log.md will be maintained`);
+      } else if (sources.length === 0) {
+        p.log.warn("No source material selected · the bundle will be based only on your request");
+      }
       console.log(boxen([
+        `${pc.bold("Mode")}      ${existingBundle ? pc.cyan("Update existing OKF bundle") : "Create new OKF bundle"}`,
         `${pc.bold("Provider")}  ${providers[provider].label}`,
         `${pc.bold("Model")}     ${model}`,
         `${pc.bold("Sources")}   ${sources.length ? sources.join(", ") : pc.dim("none")}`,
@@ -119,25 +162,30 @@ program
     }
 
     const spin = interactive ? p.spinner() : undefined;
-    spin?.start("Generating knowledge bundle");
+    spin?.start(existingBundle ? "Improving existing knowledge bundle" : "Generating knowledge bundle");
     try {
       const result = await generateBundle({
         request: generationRequest,
         provider,
         model,
         apiKey,
-        baseUrl: flags.baseUrl,
+        baseUrl: resolveConfigValue(OKFGEN_BASE_URL_ENV_KEY, flags.baseUrl).value,
+        maxRetries: resolveRetryAttempts(),
         outputDirectory,
         sources,
         force: flags.force,
         includeLog,
+        onProgress: (event) => spin?.message(event.message),
       });
-      spin?.stop(`Generated ${result.plan.concepts.length} concepts`);
+      spin?.stop(`${result.mode === "updated" ? "Updated" : "Generated"} ${result.plan.concepts.length} concepts`);
+      if (interactive) rememberGeneration(outputDirectory, sources);
       const viewer = shouldView
         ? await startViewer({ directory: outputDirectory, port: parsePort(flags.viewPort), openBrowser: true })
         : undefined;
       const warnings = result.validation.issues.filter((issue) => issue.severity === "warning");
       if (interactive) {
+        for (const warning of warnings.slice(0, 3)) p.log.warn(`${warning.file}: ${warning.message}`);
+        if (warnings.length > 3) p.log.warn(`${warnings.length - 3} more warnings · run okfgen validate ${outputDirectory} for details`);
         p.note(
           [
             `Provider  ${providers[provider].label}`,
@@ -147,19 +195,22 @@ program
             `Output    ${path.resolve(outputDirectory)}`,
             ...(viewer ? [`Viewer    ${viewer.url}`] : []),
           ].join("\n"),
-          "Bundle ready",
+          result.mode === "updated" ? "Bundle updated" : "Bundle ready",
         );
-        p.outro(viewer ? `Explorer running at ${viewer.url} · press Ctrl+C to stop` : "OKF v0.1 validation passed");
+        p.outro(viewer
+          ? `Explorer running at ${viewer.url} · press Ctrl+C to stop`
+          : `Validation passed · next: okfgen view ${outputDirectory}`);
       } else {
         process.stdout.write(`${JSON.stringify({
           output: path.resolve(flags.output),
+          mode: result.mode,
           concepts: result.plan.concepts.length,
           files: result.files.length,
           warnings: warnings.length,
         })}\n`);
       }
     } catch (error) {
-      spin?.stop("Generation failed");
+      spin?.stop("Generation stopped before completion");
       throw error;
     }
   });
@@ -195,10 +246,12 @@ program
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     } else {
       for (const issue of result.issues) {
-        const label = issue.severity === "error" ? "error" : "warn ";
-        process.stdout.write(`${label}  ${issue.file}: ${issue.message}\n`);
+        const label = issue.severity === "error" ? pc.red("error") : pc.yellow("warn ");
+        process.stdout.write(`${label}  ${pc.bold(issue.file)}: ${issue.message}\n`);
       }
-      process.stdout.write(`${result.valid ? "valid" : "invalid"}  ${result.filesChecked} Markdown files checked\n`);
+      const status = result.valid ? pc.green("valid") : pc.red("invalid");
+      process.stdout.write(`${status}  ${result.filesChecked} Markdown files checked · ${result.issues.length} issue${result.issues.length === 1 ? "" : "s"}\n`);
+      if (result.valid) process.stdout.write(`${pc.dim("Hint:")} Explore it with okfgen view ${directory}\n`);
     }
     if (!result.valid) process.exitCode = 1;
   });
@@ -207,14 +260,22 @@ program
   .command("providers")
   .description("List supported model providers and credential variables")
   .action(() => {
+    process.stdout.write(`${pc.bold("Provider")}     ${pc.bold("Name")}                    ${pc.bold("Credential")}\n`);
     for (const name of providerNames) {
       const provider = providers[name];
       process.stdout.write(`${name.padEnd(12)} ${provider.label.padEnd(23)} ${provider.envKey ?? "no key required"}\n`);
     }
+    process.stdout.write(`\n${pc.dim("Hint:")} Set the credential in your environment, or paste it securely during /generate.\n`);
   });
 
-program.parseAsync().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
+const cliArguments = process.argv.slice(2);
+const run = loadOkfgenEnv().then(async () => {
+  if (process.stdin.isTTY && process.stdout.isTTY && cliArguments.length === 0) await startInteractiveShell(program, VERSION);
+  else await program.parseAsync();
+});
+
+run.catch((error: unknown) => {
+  const message = friendlyError(error);
   p.log.error(message);
   process.exitCode = 1;
 });
