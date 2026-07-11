@@ -6,6 +6,7 @@ export interface ExistingBundle {
   root: string;
   markdownFiles: string[];
   conceptPaths: string[];
+  conceptContents: Record<string, string>;
   log?: string;
 }
 
@@ -19,9 +20,12 @@ export async function inspectExistingBundle(directory: string): Promise<Existing
     const markdownFiles = await findMarkdownFiles(root);
     const relativeFiles = markdownFiles.map((file) => toPosix(path.relative(root, file)));
     const conceptPaths = relativeFiles.filter((file) => !["index.md", "log.md"].includes(path.posix.basename(file)));
+    const conceptContents = Object.fromEntries(await Promise.all(conceptPaths.map(async (file) => {
+      return [file, await readFile(path.join(root, file), "utf8")] as const;
+    })));
     const logPath = path.join(root, "log.md");
     const log = relativeFiles.includes("log.md") ? await readFile(logPath, "utf8") : undefined;
-    return { root, markdownFiles: relativeFiles, conceptPaths, ...(log === undefined ? {} : { log }) };
+    return { root, markdownFiles: relativeFiles, conceptPaths, conceptContents, ...(log === undefined ? {} : { log }) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;

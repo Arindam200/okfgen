@@ -1,5 +1,7 @@
 import { mkdir, readdir, rmdir, unlink, writeFile } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
+import matter from "gray-matter";
 import { stringify } from "yaml";
 import { inspectExistingBundle, type ExistingBundle } from "./existing-bundle.js";
 import type { BundlePlan, Concept } from "./schema.js";
@@ -148,17 +150,45 @@ async function assertWritableDestination(root: string, force: boolean, updating:
 
 function renderLog(plan: BundlePlan, now: Date, existingBundle: ExistingBundle | undefined): string {
   const date = now.toISOString().slice(0, 10);
+  const timestamp = now.toISOString();
   if (!existingBundle) {
-    return `# Directory Update Log\n\n## ${date}\n\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKFgen.\n`;
+    const created = plan.concepts.map((concept) => `* **Added \`${concept.path}\`**`).join("\n");
+    return `# Directory Update Log\n\n## ${date}\n\n* **Time**: ${timestamp}\n* **Creation**: Generated ${plan.concepts.length} concept${plan.concepts.length === 1 ? "" : "s"} with OKFgen.\n${created}\n`;
   }
 
   const previousPaths = new Set(existingBundle.conceptPaths);
   const nextPaths = new Set(plan.concepts.map((concept) => concept.path));
-  const improved = [...nextPaths].filter((conceptPath) => previousPaths.has(conceptPath)).length;
-  const added = [...nextPaths].filter((conceptPath) => !previousPaths.has(conceptPath)).length;
-  const removed = [...previousPaths].filter((conceptPath) => !nextPaths.has(conceptPath)).length;
+  const changed = plan.concepts.flatMap((concept) => {
+    if (!previousPaths.has(concept.path)) return [];
+    const fields = changedConceptFields(existingBundle.conceptContents[concept.path], concept);
+    return fields.length > 0 ? [{ path: concept.path, fields }] : [];
+  });
+  const added = [...nextPaths].filter((conceptPath) => !previousPaths.has(conceptPath));
+  const removed = [...previousPaths].filter((conceptPath) => !nextPaths.has(conceptPath));
   const history = existingBundle.log?.trimEnd() || "# Directory Update Log";
-  return `${history}\n\n## ${date}\n\n* **Update**: Improved ${improved} existing concept${improved === 1 ? "" : "s"}, added ${added}, and removed ${removed} with OKFgen.\n`;
+  const details = [
+    ...changed.map((change) => `* **Changed \`${change.path}\`**: ${change.fields.join(", ")}.`),
+    ...added.map((conceptPath) => `* **Added \`${conceptPath}\`**`),
+    ...removed.map((conceptPath) => `* **Removed \`${conceptPath}\`**`),
+  ];
+  if (details.length === 0) details.push("* **Documents**: No concept content changed.");
+  return `${history}\n\n## ${date}\n\n* **Time**: ${timestamp}\n* **Update**: Changed ${changed.length}, added ${added.length}, and removed ${removed.length} concepts with OKFgen.\n${details.join("\n")}\n`;
+}
+
+function changedConceptFields(existingContent: string | undefined, concept: Concept): string[] {
+  if (!existingContent) return ["content"];
+  const existing = matter(existingContent);
+  const fields: string[] = [];
+  if (existing.data.type !== concept.type) fields.push("type");
+  if (existing.data.title !== concept.title) fields.push("title");
+  if (existing.data.description !== concept.description) fields.push("description");
+  if ((existing.data.resource ?? undefined) !== (concept.resource ?? undefined)) fields.push("resource");
+  if (!isDeepStrictEqual(existing.data.tags ?? [], concept.tags)) fields.push("tags");
+  if (existing.content.trim() !== concept.body.trim()) fields.push("body");
+  const existingMetadata = removeReservedMetadata(existing.data);
+  delete existingMetadata.timestamp;
+  if (!isDeepStrictEqual(existingMetadata, concept.metadata ?? {})) fields.push("metadata");
+  return fields;
 }
 
 async function removeStaleGeneratedFiles(
